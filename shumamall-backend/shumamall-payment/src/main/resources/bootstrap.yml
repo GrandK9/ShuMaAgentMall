@@ -1,0 +1,48 @@
+spring:
+  application:
+    name: shumamall-payment
+  config:
+    import:
+      # 必须写成 `optional:nacos:<dataId>.yaml`；裸写 `optional:nacos` 会被静默跳过
+      # （ConfigDataLocationResolver.hasPrefix("nacos:") 返回 false）。
+      - optional:nacos:shumamall-common.yaml
+  cloud:
+    nacos:
+      config:
+        server-addr: localhost:8848
+        file-extension: yaml
+        # 不能用 public 命名空间：取不到配置的完整原因见 shumamall-comment/bootstrap.yml
+        namespace: shumamall
+      discovery:
+        server-addr: localhost:8848
+  datasource:
+    url: jdbc:mysql://localhost:3306/shumamall?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&allowMultiQueries=true
+    username: root
+    password: root123
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+server:
+  port: 8085
+
+# ===== Seata 分布式事务（AT 模式，发起方）=====
+# 支付 = payment 本地写流水 + 远程调 order 改订单状态，退款 = 反向的两步。
+# 两处都是「一端提交成功、另一端失败就出现脏数据」的跨服务写，因此由 payment 作为发起方
+# 开全局事务（@GlobalTransactional），order 侧作为分支事务参与，失败时可反向补偿。
+# 配置项与 shumamall-order 保持一致。
+seata:
+  application-id: ${spring.application.name}
+  tx-service-group: shumamall_tx_group
+  service:
+    vgroup-mapping:
+      shumamall_tx_group: default
+    # 直连 TC，不经注册中心发现（原因详见 shumamall-order/bootstrap.yml 同名注释）
+    grouplist:
+      default: 127.0.0.1:8091
+  registry:
+    type: file
+  config:
+    type: file
