@@ -1,0 +1,82 @@
+spring:
+  # Agent 服务不直连数据库（经 Feign 调用后端服务），排除数据源自动配置
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: shumamall
+    password: shumamall123
+    listener:
+      simple:
+        # 手动 ack：处理成功才确认；失败时不确认，由监听器显式 basicNack 转入死信队列
+        acknowledge-mode: manual
+        prefetch: 10
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+    elasticsearch:
+      uris: http://localhost:9200
+  ai:
+    openai:
+      # DeepSeek 通过 OpenAI 兼容协议接入
+      base-url: https://api.deepseek.com
+      # api-key 不放本地：spring.config.import 导入的 Nacos 配置优先级低于本地文件，
+      # 本地即便留空默认值也会把配置中心下发的密钥覆盖掉。
+      # 密钥由 Nacos dataId `shumamall-agent.yaml` 下发（模板见 nacos-config/shumamall-agent.yaml）。
+      chat:
+        options:
+          model: deepseek-chat
+          temperature: 0.7
+
+shumamall:
+  # JWT 密钥已移交配置中心（shumamall-common.yaml），本地不再保留副本：
+  # spring.config.import 导入的配置优先级低于本地文件，留副本会让配置中心下发的值失效。
+  agent:
+    # mock-llm=true 时使用 Mock 模型，不依赖真实 DeepSeek 也能演示完整编排链路
+    mock-llm: false
+    model: deepseek-chat
+    memory:
+      # 单个会话保留的最大消息数
+      max-messages: 20
+      # 会话 TTL（分钟），到期自动清理
+      ttl-minutes: 30
+    planning:
+      # 单次对话最大规划步骤数，防止模型生成过长计划
+      max-steps: 5
+    search:
+      # 向量模型（embedding）：与 chat 模型分离配置，因为 DeepSeek 只提供 chat，
+      # 没有 /v1/embeddings 端点（实测 POST https://api.deepseek.com/embeddings 返回 404，
+      # 其 /models 仅列出 deepseek-flash 与 deepseek-v4-pro 两个对话模型）。
+      # 删掉 base-url 即关闭真实 embedding，ProductEmbeddingService 自动降级为确定性伪向量。
+      # api-key 同上：由 Nacos dataId `shumamall-agent.yaml` 下发。
+      embedding:
+        base-url: https://api.siliconflow.cn
+        # 中文语义模型，输出 1024 维（实测区分度 0.2503，优于 bge-m3 的 0.2200 与
+        # bge-large-en-v1.5 的 0.1015——英文模型处理中文时语义区分能力减半）
+        model: BAAI/bge-large-zh-v1.5
+        # 向量维度：必须与所用模型输出维度、ES 索引 mapping 三者一致
+        # （bge-large-zh-v1.5 = 1024，bge-small-zh-v1.5 = 512）
+        dims: 1024
+        # 检索侧 query 指令前缀（bge 系列官方用法：query 加、文档不加）
+        # 实测加入后区分度由 0.2503 提升至 0.2725
+        query-prefix: 为这个句子生成表示以用于检索相关文章：
+      rrf:
+        # RRF 融合排序参数（BM25 与 KNN 结果各按排名倒序融合，rank-constant 越大越平滑）
+        rank-constant: 60
+        window-size: 50
+      # 商品变更事件交换机（product 发布，search/agent 各自绑定独立队列消费）
+      sync-exchange: shumamall.product.sync.exchange
+      # 增量同步队列（绑定到上述交换机；与 search 服务队列隔离，避免竞争消费漏消息）
+      sync-queue: agent.search.sync.queue
+      # 死信交换机（与 search 共用同一条 DLX，但死信队列各自独立）
+      dlx: shumamall.product.sync.dlx
+      # 死信队列（失败消息在此堆积，等待人工排查/重放）
+      dlq: agent.search.sync.queue.dlq
+
+logging:
+  level:
+    com.shumamall.agent: debug
