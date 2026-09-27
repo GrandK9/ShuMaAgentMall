@@ -1,0 +1,404 @@
+# =============================================================================
+# 应用层编排：13 个后端微服务
+#
+# 与 docker-compose.yml（基础设施）分开的两个理由：
+#   1. 基础设施启动一次长期复用，应用服务要按功能子集反复重建，混在一起每次
+#      重启应用都会连带重启数据库；
+#   2. 分开后可以「只构建/只启动我要验的那几个服务」，不必为改一行订单代码
+#      把 13 个镜像全打一遍。
+#
+# -----------------------------------------------------------------------------
+# 前置：先起基础设施（必须先起，应用容器要靠 shumamall-net 网络找 mysql/redis/...）
+#
+#   docker compose up -d                        # 全部基础设施
+#   docker compose up -d mysql redis nacos      # 只起最小集（不跑搜索/视频等功能）
+#
+# -----------------------------------------------------------------------------
+# 按功能启动应用子集（profile）
+#
+#   最小可下单链路：网关 + 认证 + 用户 + 商品 + 订单 + 支付
+#     docker compose -f docker-compose.app.yml --profile core up -d --build
+#
+#   加搜索链路（ES 检索）：core + search，需要基础设施里的 elasticsearch、rabbitmq
+#     docker compose up -d mysql redis nacos elasticsearch rabbitmq
+#     docker compose -f docker-compose.app.yml --profile core --profile search up -d --build
+#
+#   加 AI 导购：core + search + agent
+#     docker compose -f docker-compose.app.yml \
+#       --profile core --profile search --profile agent up -d --build
+#
+#   后台管理相关：权限 + 管理端 + 视频 + 字典
+#     docker compose -f docker-compose.app.yml --profile admin up -d --build
+#
+#   评论/弹幕：依赖 MySQL + MongoDB + Redis
+#     docker compose -f docker-compose.app.yml --profile comment up -d --build
+#
+#   全量 13 个服务
+#     docker compose -f docker-compose.app.yml --profile all up -d --build
+#
+# -----------------------------------------------------------------------------
+# 只重建其中几个镜像（改完代码只重启受影响的服务）
+#
+#   docker compose -f docker-compose.app.yml --profile core build order payment
+#   docker compose -f docker-compose.app.yml --profile core up -d --no-deps order
+#
+# 停掉某个子集（不影响基础设施）
+#   docker compose -f docker-compose.app.yml --profile core down
+#
+# -----------------------------------------------------------------------------
+# 接口文档（Swagger UI）
+#   除网关外的服务都是 WebMVC 应用，各自暴露 Swagger UI 与 OpenAPI JSON：
+#     http://localhost:8083/swagger-ui/index.html     商品（端口对照见各服务 ports 映射）
+#     http://localhost:8083/v3/api-docs               OpenAPI JSON
+#   网关是 WebFlux，用的 springdoc-openapi-starter-webmvc-ui 不适用于它，
+#   因此 8080 上没有 UI（/swagger-ui/** 与 /v3/api-docs 均 404），这是预期行为。
+#   网关的职责是路由，接口文档看具体业务服务的端口即可。
+#
+# -----------------------------------------------------------------------------
+# 健康检查（healthcheck）
+#
+#   每个服务探自己的 /actuator/health/liveness（actuator 由 shumamall-common 传递，
+#   liveness / readiness 探针用 MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED 打开，
+#   见 x-common-env；Boot 默认只在 k8s 环境自动开启）。
+#     docker compose -f docker-compose.app.yml ps      # STATUS 里可见 (healthy)
+#
+#   为什么探 liveness 而不是聚合端点 /actuator/health：
+#     聚合端点把外部依赖（ES / Redis / RabbitMQ / DB）也算进结果，任一依赖不可用就
+#     DOWN → healthcheck 失败。但「容器该不该被判定为健康」只应看进程自身：
+#       - 外部依赖不可用是运行时状态，重启容器解决不了（ES 挂了重启 agent 无意义）；
+#       - 实测反例（历史，已修）：引入 actuator 时，agent 的 ES Java client 是 8.18.8
+#         （Spring Boot 3.5 管理）而服务端还是 8.13.0，client 解不了 cluster.health 响应，
+#         聚合端点因此恒为 DOWN，可检索功能本身完全正常（回归 21/21 通过）。该版本不匹配
+#         已于第二十轮通过把 ES 服务端升到 8.18.8 解决 —— 但这个例子说明聚合 DOWN ≠ 容器该重启；
+#       - liveness group 只含 livenessState，不做任何外部探测，也不会每 5 秒去打一次
+#         ES health 刷一屏 WARN 堆栈。
+#     依赖可用性仍可随时手动查聚合端点：curl localhost:8088/actuator/health
+#
+#   为什么只加 healthcheck、不加 depends_on：
+#     - 真正的依赖（mysql / redis / nacos / es ...）都在另一份 compose 文件里，
+#       而 depends_on 只在同一份文件内生效，跨文件写不了；
+#     - 服务之间是运行时依赖（Nacos 服务发现 + Feign 重试），启动先后不影响结果，
+#       硬编 depends_on 只会把并行启动改成串行、拖长启动时间，并不解决任何真实问题；
+#     - healthcheck 提供的是「就绪判定」这一真正缺的能力：以前只能靠端口连通性
+#       或翻日志猜服务起没起来。
+# =============================================================================
+
+name: shumamall-app
+
+# ---------------------------------------------------------------------------
+# 公共环境变量。
+# 各服务 bootstrap.yml 里写的是 localhost，在容器里 localhost 指向容器自身，
+# 必须用基础设施的 compose 服务名覆盖（同一网络内可直接解析）。
+# 用不到某项的服务也会拿到这些变量，Spring 对未引入的组件会直接忽略，无副作用。
+# ---------------------------------------------------------------------------
+x-common-env: &common-env
+  SPRING_CLOUD_NACOS_CONFIG_SERVER_ADDR: nacos:8848
+  SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR: nacos:8848
+  SPRING_DATA_REDIS_HOST: redis
+  SPRING_RABBITMQ_HOST: rabbitmq
+  SPRING_ELASTICSEARCH_URIS: http://elasticsearch:9200
+  SPRING_DATA_MONGODB_URI: mongodb://shumamall:shumamall123@mongo:27017/shumamall?authSource=admin
+  MINIO_ENDPOINT: http://minio:9000
+  # 打开 /actuator/health/liveness 与 /readiness（Boot 默认只在 k8s 环境自动开启）。
+  # healthcheck 探的是 liveness：见文件头「健康检查」一节。
+  MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+
+# 数据库连接串（用户名/密码与 bootstrap.yml 一致，无需覆盖）
+x-ds-shumamall: &ds-shumamall "jdbc:mysql://mysql:3306/shumamall?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&allowMultiQueries=true"
+x-ds-shumamall-perm: &ds-shumamall-perm "jdbc:mysql://mysql:3306/shumamall_perm?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&allowMultiQueries=true"
+
+# 应用服务的公共字段（重启策略、内存上限、网络）
+x-app-base: &app-base
+  restart: unless-stopped
+  mem_limit: 512m
+  networks:
+    - shumamall-net
+
+# 健康检查的公共参数；test 命令里的端口各服务不同，写在各自服务里。
+#   start_period 给 90s：JVM 启动 + 拉 Nacos 配置 + Seata/ES 等初始化，
+#   这段窗口内的探测失败不计入 retries，避免刚启动就被判 unhealthy。
+#   探测用 curl：运行镜像 eclipse-temurin:21-jre 自带 /usr/bin/curl，无需另装工具。
+x-healthcheck-base: &healthcheck-base
+  interval: 15s
+  timeout: 5s
+  retries: 5
+  start_period: 90s
+
+services:
+
+  # ========================= 网关 =========================
+  gateway:
+    <<: *app-base
+    profiles: [core, all]
+    image: shumamall/gateway:1.0.0
+    build:
+      context: ./shumamall-backend
+      dockerfile: Dockerfile
+      args:
+        MODULE: shumamall-gateway
+        PORT: 8080
+    ports:
+      - "8080:8080"
+    healthcheck:
+      <<: *healthcheck-base
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health/liveness || exit 1"]
+    environment:
+      <<: *common-env
+
+  # ========================= 认证 =========================
+  auth:
+    <<: *app-base
+    profiles: [core, all]
+    image: shumamall/auth:1.0.0
+    build:
+      context: ./shumamall-backend
+      dockerfile: Dockerfile
+      args:
+        MODULE: shumamall-auth
+        PORT: 8081
+    ports:
+      - "8081:8081"
+    healthcheck:
+      <<: *healthcheck-base
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/actuator/health/liveness || exit 1"]
+    environment:
+      <<: *common-env
+      SPRING_DATASOURCE_URL: *ds-shumamall
+
+  # ========================= 用户 =========================
+  user:
+    <<: *app-base
+    profiles: [core, all]
+    image: shumamall/user:1.0.0
+    build:
+      context: ./shumamall-backend
+      dockerfile: Dockerfile
+      args:
+        MODULE: shumamall-user
+        PORT: 8082
+    ports:
+      - "8082:8082"
+    healthcheck:
+      <<: *healthcheck-base
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8082/actuator/health/liveness || exit 1"]
+    environment:
+      <<: *common-env
+      SPRING_DATASOURCE_URL: *ds-shumamall
+
+  # ========================= 商品 =========================
+  # 商品变更事件的生产者（RabbitMQ），并作为 Seata 分支事务参与方
+  product:
+    <<: *app-base
+    profiles: [core, all]
+    image: shumamall/product:1.0.0
+    build:
+      context: ./shumamall-backend
+      dockerfile: Dockerfile
+      args:
+        MODULE: shumamall-product
+        PORT: 8083
+    ports:
+      - "8083:8083"
+    healthcheck:
+      <<: *healthcheck-base
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8083/actuator/health/liveness || exit 1"]
+    environment:
+      <<: *common-env
+      SPRING_DATASOURCE_URL: *ds-shumamall
+      # Seata 的 grouplist 在 yml 里写死 127.0.0.1:8091，容器内必须指向 seata 容器。
+      # 用 -D 系统属性覆盖而不走环境变量：Seata 读配置的路径不保证走 Spring 的
+      # 宽松绑定，系统属性是最确定的入口。
+      JAVA_OPTS: "-XX:MaxRAMPercentage=75 -Duser.timezone=Asia/Shanghai -Dfile.encoding=UTF-8 -Dseata.service.grouplist.default=seata:8091"
+
+  # ========================= 订单 =========================
+  order:
+    <<: *app-base
+    profiles: [core, all]
+    image: shumamall/order:1.0.0
+    build:
+      context: ./shumamall-backend
+      dockerfile: Dockerfile
+      args:
+        MODULE: shumamall-order
+        PORT: 8084
+    ports:
+      - "8084:8084"
+    healthcheck:
+      <<: *healthcheck-base
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8084/actuator/health/liveness || exit 1"]
+    environment:
+      <<: *common-env
+      SPRING_DATASOURCE_URL: *ds-shumamall
+      JAVA_OPTS: "-XX:MaxRAMPercentage=75 -Duser.timezone=Asia/Shanghai -Dfile.encoding=UTF-8 -Dseata.service.grouplist.default=seata:8091"
+
+  # ========================= 支付 =========================
+  # 支付/退款的发起方（@GlobalTransactional），因此同样需要把 grouplist 指向 seata 容器
+  payment:
+    <<: *app-base
+    profiles: [core, all]
+    image: shumamall/payment:1.0.0
+    build:
+      context: ./shumamall-backend
+      dockerfile: Dockerfile
+      args:
+        MODULE: shumamall-payment
+        PORT: 8085
+    ports:
+      - "8085:8085"
+    healthcheck:
+      <<: *healthcheck-base
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8085/actuator/health/liveness || exit 1"]
+    environment:
+      <<: *common-env
+      SPRING_DATASOURCE_URL: *ds-shumamall
+      JAVA_OPTS: "-XX:MaxRAMPercentage=75 -Duser.timezone=Asia/Shanghai -Dfile.encoding=UTF-8 -Dseata.service.grouplist.default=seata:8091"
+
+  # ========================= 权限 =========================
+  # 独立库 shumamall_perm + MongoDB（审计日志）
+  permission:
+    <<: *app-base
+    profiles: [admin, all]
+    image: shumamall/permission:1.0.0
+    build:
+      context: ./shumamall-backend
+      dockerfile: Dockerfile
+      args:
+        MODULE: shumamall-permission
+        PORT: 8086
+    ports:
+      - "8086:8086"
+    healthcheck:
+      <<: *healthcheck-base
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8086/actuator/health/liveness || exit 1"]
+    environment:
+      <<: *common-env
+      SPRING_DATASOURCE_URL: *ds-shumamall-perm
+
+  # ========================= 搜索 =========================
+  # 消费商品变更消息写入 ES；ES 与 RabbitMQ 必须先起
+  search:
+    <<: *app-base
+    profiles: [search, all]
+    image: shumamall/search:1.0.0
+    build:
+      context: ./shumamall-backend
+      dockerfile: Dockerfile
+      args:
+        MODULE: shumamall-search
+        PORT: 8087
+    ports:
+      - "8087:8087"
+    healthcheck:
+      <<: *healthcheck-base
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8087/actuator/health/liveness || exit 1"]
+    environment:
+      <<: *common-env
+
+  # ========================= AI 导购 =========================
+  # 依赖 ES 检索 + RabbitMQ 索引同步；DeepSeek / 向量模型密钥由 Nacos 下发
+  agent:
+    <<: *app-base
+    profiles: [agent, all]
+    image: shumamall/agent:1.0.0
+    mem_limit: 768m
+    build:
+      context: ./shumamall-backend
+      dockerfile: Dockerfile
+      args:
+        MODULE: shumamall-agent
+        PORT: 8088
+    ports:
+      - "8088:8088"
+    healthcheck:
+      <<: *healthcheck-base
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8088/actuator/health/liveness || exit 1"]
+    environment:
+      <<: *common-env
+
+  # ========================= 评论/弹幕 =========================
+  comment:
+    <<: *app-base
+    profiles: [comment, all]
+    image: shumamall/comment:1.0.0
+    build:
+      context: ./shumamall-backend
+      dockerfile: Dockerfile
+      args:
+        MODULE: shumamall-comment
+        PORT: 8089
+    ports:
+      - "8089:8089"
+    healthcheck:
+      <<: *healthcheck-base
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8089/actuator/health/liveness || exit 1"]
+    environment:
+      <<: *common-env
+
+  # ========================= 管理端 =========================
+  # 文件上传走 MinIO
+  admin:
+    <<: *app-base
+    profiles: [admin, all]
+    image: shumamall/admin:1.0.0
+    build:
+      context: ./shumamall-backend
+      dockerfile: Dockerfile
+      args:
+        MODULE: shumamall-admin
+        PORT: 8090
+    ports:
+      - "8090:8090"
+    healthcheck:
+      <<: *healthcheck-base
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8090/actuator/health/liveness || exit 1"]
+    environment:
+      <<: *common-env
+
+  # ========================= 视频 =========================
+  video:
+    <<: *app-base
+    profiles: [admin, all]
+    image: shumamall/video:1.0.0
+    mem_limit: 768m
+    build:
+      context: ./shumamall-backend
+      dockerfile: Dockerfile
+      args:
+        MODULE: shumamall-video
+        PORT: 8092
+    ports:
+      - "8092:8092"
+    healthcheck:
+      <<: *healthcheck-base
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8092/actuator/health/liveness || exit 1"]
+    environment:
+      <<: *common-env
+      # 视频元数据单独一个 MongoDB 库
+      SPRING_DATA_MONGODB_URI: mongodb://shumamall:shumamall123@mongo:27017/shumamall_video?authSource=admin
+
+  # ========================= 字典 =========================
+  dict:
+    <<: *app-base
+    profiles: [admin, all]
+    image: shumamall/dict:1.0.0
+    build:
+      context: ./shumamall-backend
+      dockerfile: Dockerfile
+      args:
+        MODULE: shumamall-dict
+        PORT: 8093
+    ports:
+      - "8093:8093"
+    healthcheck:
+      <<: *healthcheck-base
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8093/actuator/health/liveness || exit 1"]
+    environment:
+      <<: *common-env
+      SPRING_DATASOURCE_URL: *ds-shumamall
+
+# 与 docker-compose.yml 共用同一张网络：
+# 由 docker-compose.yml 创建，本文件只引用（external），所以要先起基础设施。
+networks:
+  shumamall-net:
+    name: shumamall-net
+    external: true
