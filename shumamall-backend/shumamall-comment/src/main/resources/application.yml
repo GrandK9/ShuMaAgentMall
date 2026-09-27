@@ -1,0 +1,21 @@
+spring:
+  data:
+    mongodb:
+      # 容器开启了 root 认证（见 docker-compose.yml 的 MONGO_INITDB_ROOT_*），
+      # 必须带凭据并指定 authSource=admin，否则报 error 13 Unauthorized。
+      # 与 shumamall-video 保持同一写法（uri 优先于 host/port/database）。
+      uri: mongodb://shumamall:shumamall123@localhost:27017/shumamall?authSource=admin
+      auto-index-creation: true
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+
+# Feign 超时与 Resilience4j 熔断参数已提升到配置中心公共配置 shumamall-common.yaml，
+# 全服务共享同一套：connect 2s / read 5s；滑动窗口 10 次、失败率 50% 开路、半开探测 3 次。
+# 这里不再放副本，避免两处维护出现偏差（注意 circuitbreaker.enabled=true 也在公共配置里，
+# 本服务的 fallbackFactory 依赖它，务必确保 Nacos 上有该配置）。
+
+logging:
+  level:
+    com.shumamall.comment: debug

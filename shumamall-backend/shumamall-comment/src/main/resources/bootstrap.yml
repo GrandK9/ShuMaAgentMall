@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: shumamall-comment
+  config:
+    import:
+      # 写法要求：必须写成 `optional:nacos:<dataId>.yaml`，不能裸写 `optional:nacos`。
+      # 裸写时 Nacos 的 ConfigDataLocationResolver.hasPrefix("nacos:") 返回 false，
+      # 整个配置源被静默跳过，启动日志里连一条 Nacos Config 记录都不会出现。
+      - optional:nacos:shumamall-common.yaml
+  cloud:
+    nacos:
+      config:
+        server-addr: localhost:8848
+        file-extension: yaml
+        # 配置放在独立命名空间 shumamall，而不是 public。
+        # 传空串或不传时客户端会把命名空间解析成字面量 "public"（监听键
+        # Config-fixed-public-localhost_8848, tenant=public），而 2.3.2 服务端把 public
+        # 的数据存在 tenant_id='' 下；nacos-client 3.x 走 gRPC 查询不做归一化，
+        # 于是报 config[dataId=...] is empty，配置拿不到。独立命名空间的 tenant 是
+        # 真实存在的字符串，不触发该归一化差异。
+        namespace: shumamall
+      discovery:
+        server-addr: localhost:8848
+        # 不硬编码 ip：写死的 192.168.1.x 与本机实际地址不符，会把不可达地址
+        # 注册进 Nacos 导致跨服务调用失败；留空由 Nacos 自动探测本机地址。
+        # 服务注册发现仍留在 public 命名空间（所有实例一致），本次只隔离配置。
+
+server:
+  port: 8089
