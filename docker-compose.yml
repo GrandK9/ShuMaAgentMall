@@ -13,6 +13,9 @@ services:
       MYSQL_DATABASE: shumamall
       MYSQL_CHARACTER_SET_SERVER: utf8mb4
       MYSQL_COLLATION_SERVER: utf8mb4_unicode_ci
+      # 时区：容器 OS 层设为东八区，mysqld 的 time_zone 取 SYSTEM，会跟着一起生效。
+      # 不设时容器默认 UTC，DATETIME 的 CURRENT_TIMESTAMP 会与应用侧 JVM 差 8 小时。
+      TZ: Asia/Shanghai
     volumes:
       - mysql-data:/var/lib/mysql
       - ./mysql-init:/docker-entrypoint-initdb.d
