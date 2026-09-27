@@ -1,0 +1,168 @@
+spring:
+  application:
+    name: shumamall-gateway
+  config:
+    import:
+      # 写法要求：必须写成 `optional:nacos:<dataId>.yaml`，不能裸写 `optional:nacos`。
+      # 裸写时 Nacos 的 ConfigDataLocationResolver.hasPrefix("nacos:") 返回 false，
+      # 整个配置源被静默跳过，启动日志里连一条 Nacos Config 记录都不会出现。
+      #
+      # 曾经踩过的坑（已解决）：客户端日志里监听键是 `Config-fixed-public-localhost_8848`，
+      # 即不写 namespace 时命名空间被解析成字面量 "public"；2.3.2 服务端把 public 的数据
+      # 存在 tenant_id='' 下，HTTP 查询路径会把 public 归一化成空串，而 nacos-client 3.x
+      # 默认走的 gRPC 查询路径不会归一化，于是报 `config[...] is empty`。
+      # 显式写 namespace: "" 无效（仍是 tenant=public），建独立命名空间才是有效解法。
+      #
+      # 路由仍留在本文件而不放配置中心：本地文件优先级高于 import 导入的配置，
+      # 两边都写会变成"本地覆盖远端"的隐形双份配置，排查时极易误判。
+      - optional:nacos:shumamall-common.yaml
+  cloud:
+    nacos:
+      config:
+        server-addr: localhost:8848
+        file-extension: yaml
+        # 不能用 public 命名空间：取不到配置的完整原因见 shumamall-comment/bootstrap.yml
+        namespace: shumamall
+      discovery:
+        server-addr: localhost:8848
+        # 不硬编码 ip：写死的 192.168.1.x 与本机实际地址不符，会把不可达地址
+        # 注册进 Nacos 导致跨服务调用失败；留空由 Nacos 自动探测本机地址。
+    gateway:
+      server:
+        webflux:
+          # 全局限流：Redis 令牌桶（Gateway 内置 RedisRateLimiter）
+          # replenishRate=20 —— 稳态 20 请求/秒；burstCapacity=40 —— 允许短时突发到 40
+          # requestedTokens=1 —— 每个请求消耗 1 个令牌
+          # key-resolver 见 RateLimitConfig：登录用户按 user_id、匿名按客户端 IP
+          # 超限时 Gateway 直接短路返回 HTTP 429，不转发到下游服务
+          default-filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@userOrIpKeyResolver}"
+          routes:
+            - id: auth-service
+              uri: lb://shumamall-auth
+              predicates:
+                - Path=/api/v1/auth/**
+            - id: product-user-service
+              uri: lb://shumamall-product
+              predicates:
+                - Path=/api/v1/user/product/**
+            - id: user-service
+              uri: lb://shumamall-user
+              predicates:
+                - Path=/api/v1/user/**
+            - id: categories-service
+              uri: lb://shumamall-product
+              predicates:
+                - Path=/api/v1/categories/**
+            - id: admin-product-service
+              uri: lb://shumamall-product
+              predicates:
+                - Path=/api/v1/admin/product/**
+            - id: admin-category-service
+              uri: lb://shumamall-product
+              predicates:
+                - Path=/api/v1/admin/category/**
+            - id: admin-brand-service
+              uri: lb://shumamall-product
+              predicates:
+                - Path=/api/v1/admin/brand/**
+            - id: admin-dashboard-service
+              uri: lb://shumamall-admin
+              predicates:
+                - Path=/api/v1/admin/dashboard/**
+            - id: admin-upload-service
+              uri: lb://shumamall-admin
+              predicates:
+                - Path=/api/v1/admin/upload/**
+            - id: admin-permission-service
+              uri: lb://shumamall-permission
+              predicates:
+                - Path=/api/v1/admin/permission/**
+            - id: admin-role-service
+              uri: lb://shumamall-permission
+              predicates:
+                - Path=/api/v1/admin/role/**
+            - id: admin-audit-service
+              uri: lb://shumamall-permission
+              predicates:
+                - Path=/api/v1/admin/audit/**
+            - id: permission-menus-service
+              uri: lb://shumamall-permission
+              predicates:
+                - Path=/permission/menus
+            - id: permission-my-permissions-service
+              uri: lb://shumamall-permission
+              predicates:
+                - Path=/permission/my-permissions
+
+            # ===== Phase 3: 订单 + 支付 =====
+            - id: cart-service
+              uri: lb://shumamall-order
+              predicates:
+                - Path=/api/v1/cart/**
+            - id: order-service
+              uri: lb://shumamall-order
+              predicates:
+                - Path=/api/v1/orders/**
+            - id: admin-order-service
+              uri: lb://shumamall-order
+              predicates:
+                - Path=/api/v1/admin/orders/**
+            - id: payment-service
+              uri: lb://shumamall-payment
+              predicates:
+                - Path=/api/v1/payment/**
+            - id: admin-payment-service
+              uri: lb://shumamall-payment
+              predicates:
+                - Path=/api/v1/admin/payment/**
+            - id: comment-service
+              uri: lb://shumamall-comment
+              predicates:
+                - Path=/api/v1/comment/**
+            - id: admin-comment-service
+              uri: lb://shumamall-comment
+              predicates:
+                - Path=/api/v1/admin/comment/**
+            - id: search-service
+              uri: lb://shumamall-search
+              predicates:
+                - Path=/api/v1/search/**
+            - id: dict-service
+              uri: lb://shumamall-dict
+              predicates:
+                - Path=/api/v1/dict/**
+            - id: admin-dict-service
+              uri: lb://shumamall-dict
+              predicates:
+                - Path=/api/v1/admin/dict/**
+
+            # ===== Phase 4.1: 视频服务 =====
+            - id: video-service
+              uri: lb://shumamall-video
+              predicates:
+                - Path=/api/v1/video/**
+            - id: admin-video-service
+              uri: lb://shumamall-video
+              predicates:
+                - Path=/api/v1/admin/video/**
+
+            # ===== Phase 4.2: AI Agent 服务 =====
+            # 此前漏配该路由，Agent 只能靠前端 dev server 的 proxy 直连 8088，
+            # 走网关（生产形态）时 /api/v1/agent/** 全部 404
+            - id: agent-service
+              uri: lb://shumamall-agent
+              predicates:
+                - Path=/api/v1/agent/**
+
+# JWT 密钥不再本地兜底（此前此处有一份副本，用于网关限流按用户维度分流，见 RateLimitConfig）：
+# spring.config.import 导入的配置优先级低于本地文件，本地留副本会让配置中心下发的密钥
+# 永远不生效，"密钥统一由配置中心管理"就是一句空话。唯一来源见 shumamall-common.yaml。
+
+server:
+  port: 8080
