@@ -1,0 +1,33 @@
+spring:
+  application:
+    name: shumamall-dict
+  config:
+    import:
+      # 必须写成 `optional:nacos:<dataId>.yaml`；裸写 `optional:nacos` 会被静默跳过
+      # （ConfigDataLocationResolver.hasPrefix("nacos:") 返回 false）。
+      - optional:nacos:shumamall-common.yaml
+  cloud:
+    nacos:
+      config:
+        server-addr: localhost:8848
+        file-extension: yaml
+        # 不能用 public 命名空间：取不到配置的完整原因见 shumamall-comment/bootstrap.yml
+        namespace: shumamall
+      discovery:
+        server-addr: localhost:8848
+        # 不硬编码 ip：写死的 192.168.1.x 与本机实际地址不符，会把不可达地址
+        # 注册进 Nacos 导致跨服务调用失败；留空由 Nacos 自动探测本机地址。
+  datasource:
+    url: jdbc:mysql://localhost:3306/shumamall?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
+    username: root
+    password: root123
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+server:
+  # 8091 是 Seata Server 的标准端口（docker-compose 已按 8091 映射），
+  # dict 原先占用 8091 会让 Seata 容器起不来（bind: Only one usage of each socket address）。
+  # 网关走 lb://shumamall-dict 服务发现，端口调整无需改路由。
+  port: 8093
+
+# JWT 密钥不再本地兜底：spring.config.import 导入的配置优先级低于本地文件，
+# 本地留副本会让配置中心下发的密钥永远不生效。唯一来源见 shumamall-common.yaml。
