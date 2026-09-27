@@ -1,0 +1,41 @@
+spring:
+  application:
+    name: shumamall-order
+  config:
+    import:
+      # 必须写成 `optional:nacos:<dataId>.yaml`；裸写 `optional:nacos` 会被静默跳过
+      # （ConfigDataLocationResolver.hasPrefix("nacos:") 返回 false）。
+      - optional:nacos:shumamall-common.yaml
+  cloud:
+    nacos:
+      config:
+        server-addr: localhost:8848
+        file-extension: yaml
+        # 不能用 public 命名空间：取不到配置的完整原因见 shumamall-comment/bootstrap.yml
+        namespace: shumamall
+      discovery:
+        server-addr: localhost:8848
+
+server:
+  port: 8084
+
+# ===== Seata 分布式事务（AT 模式，发起方）=====
+# 下单 = order 本地建单 + 远程调 product 扣库存。本地 @Transactional 回滚不了已提交的远程扣减，
+# 因此 createOrder 挂 @GlobalTransactional 由 Seata 统一定界分支事务并生成反向补偿 SQL。
+seata:
+  application-id: ${spring.application.name}
+  # 事务分组 → 服务端集群名
+  tx-service-group: shumamall_tx_group
+  service:
+    vgroup-mapping:
+      shumamall_tx_group: default
+    # 直连 TC 地址，不经注册中心发现。原因：seata-server 跑在容器里，注册到 Nacos 的是
+    # 容器内网 IP（如 172.18.0.x），Windows Docker Desktop 下宿主机应用不可达；而本地可用的
+    # seataio/seata-server:2.0.0 镜像不支持 SEATA_IP（镜像内检索 SEATA_IP / seata.ip 均无命中），
+    # 无法覆盖注册地址。8091 已映射到宿主机，直连即可。
+    grouplist:
+      default: 127.0.0.1:8091
+  registry:
+    type: file
+  config:
+    type: file
