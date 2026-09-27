@@ -30,14 +30,7 @@ services:
     restart: unless-stopped
     mem_limit: 128m
     ports:
-      # 宿主端口用 16379 而不是 6379：本机 Windows 的 winnat 把 6379 圈进了它的
-      # 动态保留段（`netsh interface ipv4 show excludedportrange protocol=tcp` 可见
-      # 6241-6340 覆盖了 6379），此时任何进程绑定 6379 都会报
-      # "bind: An attempt was made to access a socket in a way forbidden by its access permissions"。
-      # 容器内仍是 6379（各服务用服务名 redis:6379 连接），所以只影响「从宿主机直连 redis」。
-      # 想恢复标准映射：以管理员执行 `net stop winnat` + `net start winnat` 释放保留段，
-      # 再把这里改回 "6379:6379"。
-      - "16379:6379"
+      - "6379:6379"
     volumes:
       - redis-data:/data
     command: redis-server --appendonly yes
