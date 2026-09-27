@@ -1,0 +1,24 @@
+spring:
+  application:
+    name: shumamall-user
+  config:
+    import:
+      # 必须写成 `optional:nacos:<dataId>.yaml`；裸写 `optional:nacos` 会被静默跳过
+      # （ConfigDataLocationResolver.hasPrefix("nacos:") 返回 false）。
+      - optional:nacos:shumamall-common.yaml
+  cloud:
+    nacos:
+      config:
+        server-addr: localhost:8848
+        file-extension: yaml
+        # 不能用 public 命名空间：取不到配置的完整原因见 shumamall-comment/bootstrap.yml
+        namespace: shumamall
+      discovery:
+        server-addr: localhost:8848
+
+server:
+  port: 8082
+
+# JWT 密钥与 AES 密钥均不再本地兜底，统一由配置中心的 shumamall-common.yaml 下发：
+# 此前 AES 密钥要靠启动参数 -Dshumamall.crypto.aes-key=... 才能生效，等于"密钥管理"落在
+# 启动脚本里；现在两者都从配置中心取，本地仓库与启动命令里都不再出现密钥明文。
