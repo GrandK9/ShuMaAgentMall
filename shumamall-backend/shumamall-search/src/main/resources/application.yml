@@ -1,0 +1,45 @@
+spring:
+  # 搜索服务不直连数据库（数据经 Feign 拉取 + MQ 增量同步），排除数据源自动配置。
+  # shumamall-common 传递引入了 mybatis-plus starter，不排除会因缺少 datasource url 启动失败。
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+  data:
+    elasticsearch:
+      uris: http://localhost:9200
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: shumamall
+    password: shumamall123
+    listener:
+      simple:
+        # 手动 ack：处理成功才确认；失败时不确认，由监听器显式 basicNack 转入死信队列。
+        # 用 manual 而非默认的 auto，是为了让 ack 时机完全由业务决定（auto 下异常被
+        # 捕获后就等同于"处理成功"，消息被判成功消费而静默丢失）。
+        acknowledge-mode: manual
+        # 单消费者预取上限：避免一次把大量消息拉进客户端内存
+        prefetch: 10
+
+logging:
+  level:
+    com.shumamall.search: debug
+
+shumamall:
+  search:
+    # ES 商品索引名
+    index: shumamall_product_search
+    # 全量灌库每批写入条数
+    index-batch-size: 100
+    # 商品变更事件交换机（product 发布，各服务绑定独立队列消费）
+    sync-exchange: shumamall.product.sync.exchange
+    # 增量同步队列（绑定到上述交换机）
+    sync-queue: search.sync.queue
+    # 死信交换机（消费重试耗尽后的兜底去处，与 agent 共用同一条 DLX）
+    dlx: shumamall.product.sync.dlx
+    # 死信队列（失败消息在此堆积，等待人工排查/重放）
+    dlq: search.sync.queue.dlq
