@@ -1,0 +1,9 @@
+spring:
+  data:
+    mongodb:
+      # 容器开启了 root 认证（见 docker-compose.yml 的 MONGO_INITDB_ROOT_*），
+      # 必须带凭据并指定 authSource=admin，否则报 error 13 Unauthorized。
+      # 与 shumamall-comment / shumamall-video 保持同一写法（uri 优先于 host/port/database）。
+      uri: mongodb://shumamall:shumamall123@localhost:27017/shumamall?authSource=admin
+      # 开启后启动时按 @Document 上的 @Indexed / @CompoundIndex 建索引
+      auto-index-creation: true
