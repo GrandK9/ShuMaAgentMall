@@ -9,6 +9,35 @@ spring:
       host: localhost
       port: 6379
       database: 0
+  # rabbitmq 连接信息由 Nacos 公共配置（shumamall-common.yaml）下发，这里只配消费端行为
+  rabbitmq:
+    listener:
+      simple:
+        # 手动 ack：秒杀建单成功才确认；失败时不确认并显式 nack 进死信队列。
+        # 用 manual 而非 auto 是为了让 ack 时机由业务决定（auto 下异常被捕获后就等同于
+        # "处理成功"，消息被判成功消费而静默丢失 —— 用户以为抢到了，却永远没有订单）
+        acknowledge-mode: manual
+        # 单消费者预取上限，避免把整批洪峰消息一次性拉进客户端内存
+        prefetch: 10
+  task:
+    scheduling:
+      # order 现在有两个 @Scheduled（订单超时取消、秒杀对账），Spring Boot 默认的调度器只有
+      # 一个线程：秒杀对账在 MQ 不可用时会阻塞在消息发送上，被拖慢的却是订单超时取消。
+      # 两个互不相关的任务不该互相排队，给它们各自一个线程。
+      pool:
+        size: 2
+
+shumamall:
+  seckill:
+    mq:
+      # 建单消息交换机（direct）。秒杀落在 order 服务内，这条消息只有 order 自己消费，不需要广播
+      exchange: shumamall.seckill.exchange
+      queue: order.seckill.queue
+      # routing key 直接用队列名，便于在 RabbitMQ 控制台对照排查
+      routing-key: order.seckill.queue
+      # 死信交换机 / 队列：消费重试耗尽的消息在此堆积，等人工核对与重放
+      dlx: shumamall.seckill.dlx
+      dlq: order.seckill.queue.dlq
 
 mybatis-plus:
   configuration:

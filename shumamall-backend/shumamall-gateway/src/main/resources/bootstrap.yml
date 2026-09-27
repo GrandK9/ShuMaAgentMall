@@ -35,6 +35,8 @@ spring:
           # requestedTokens=1 —— 每个请求消耗 1 个令牌
           # key-resolver 见 RateLimitConfig：登录用户按 user_id、匿名按客户端 IP
           # 超限时 Gateway 直接短路返回 HTTP 429，不转发到下游服务
+          # 例外：秒杀路由（seckill-service）由 SeckillRateLimitConfig 豁免本限流，
+          #      原因见该类注释（default-filter 无法按路由摘除，故从 RateLimiter 侧短路）
           default-filters:
             - name: RequestRateLimiter
               args:
@@ -113,6 +115,17 @@ spring:
               uri: lb://shumamall-order
               predicates:
                 - Path=/api/v1/admin/orders/**
+            # 秒杀：路由 id 与下面的秒杀活动管理接口分开配置。
+            # id 必须叫 seckill-service —— SeckillRateLimitConfig 按路由 id 豁免全局令牌桶，
+            # 改名会让豁免失效（抢购流量重新被 20/s 的用户维度令牌桶拦住）。
+            - id: seckill-service
+              uri: lb://shumamall-order
+              predicates:
+                - Path=/api/v1/seckill/**
+            - id: admin-seckill-service
+              uri: lb://shumamall-order
+              predicates:
+                - Path=/api/v1/admin/seckill/**
             - id: payment-service
               uri: lb://shumamall-payment
               predicates:

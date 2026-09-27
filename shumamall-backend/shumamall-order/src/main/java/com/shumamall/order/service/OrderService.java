@@ -26,6 +26,24 @@ public interface OrderService {
     OrderDTO createOrder(Long userId, OrderCreateDTO dto);
 
     /**
+     * 创建秒杀订单（异步建单，供秒杀 MQ 消费者与对账重投调用）。
+     * <p>
+     * 与 {@link #createOrder} 的差别只有两点：单价取秒杀价、<b>不挂 Seata 全局事务</b>。
+     * 秒杀库存在入口已由 Redis Lua 原子预扣挡住超卖，数据库扣减只是兜底；
+     * 用户请求线程也不再等待建单结果，没有跨服务强一致的诉求，不该为此引入全局事务的开销。
+     *
+     * @param userId       用户ID
+     * @param skuId        SKU ID
+     * @param quantity     数量
+     * @param seckillPrice 秒杀价（成交价）
+     * @param addressId    收货地址ID
+     * @param remark       订单备注
+     * @return 订单DTO
+     */
+    OrderDTO createSeckillOrder(Long userId, Long skuId, Integer quantity, BigDecimal seckillPrice,
+                                Long addressId, String remark);
+
+    /**
      * 根据订单ID查询详情。
      *
      * @param id     订单ID

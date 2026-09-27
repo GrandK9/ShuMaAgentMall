@@ -225,6 +225,73 @@ public class OrderServiceImpl implements OrderService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
+    public OrderDTO createSeckillOrder(Long userId, Long skuId, Integer quantity, BigDecimal seckillPrice,
+                                       Long addressId, String remark) {
+        // 刻意不加 @GlobalTransactional：秒杀库存在入口已由 Redis Lua 原子预扣挡住超卖，
+        // 这里的数据库扣减是兜底；且用户请求线程早已返回"排队中"，没有跨服务强一致的诉求。
+        // 加了反而把每次建单都拖进两阶段提交，白白拉高 RT、放大 Seata 侧的锁竞争。
+        String orderNo = generateOrderNo();
+
+        SkuInfoDTO skuInfo;
+        try {
+            R<SkuInfoDTO> result = productFeignClient.getSkuById(skuId);
+            if (result == null || !result.isSuccess() || result.getData() == null) {
+                throw new BusinessException(ResultCode.NOT_FOUND, "SKU信息查询失败");
+            }
+            skuInfo = result.getData();
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("查询SKU信息失败: skuId={}", skuId, e);
+            throw new BusinessException(ResultCode.NOT_FOUND, "SKU信息查询失败");
+        }
+
+        OrderItemEntity item = new OrderItemEntity();
+        item.setOrderNo(orderNo);
+        item.setProductId(skuInfo.getProductId());
+        item.setProductName(skuInfo.getProductName());
+        item.setSkuId(skuId);
+        item.setSkuSpecs(skuInfo.getSkuSpecs());
+        item.setProductImage(skuInfo.getProductImage());
+        item.setQuantity(quantity);
+        // 单价取秒杀价（抢购时的活动价快照），不是 SKU 当前原价 —— 活动改价不影响已成单的金额
+        item.setPrice(seckillPrice);
+        item.setSubtotal(seckillPrice.multiply(BigDecimal.valueOf(quantity)));
+
+        BigDecimal totalAmount = item.getSubtotal();
+        BigDecimal freightAmount = new BigDecimal("0.00");
+        OrderEntity order = new OrderEntity();
+        order.setOrderNo(orderNo);
+        order.setUserId(userId);
+        order.setTotalAmount(totalAmount);
+        order.setPayAmount(totalAmount.add(freightAmount));
+        order.setFreightAmount(freightAmount);
+        // 与普通订单同构：秒杀单就是一笔普通待付款订单，支付/退款/超时取消/状态机全部零改造复用
+        order.setStatus(OrderStatusEnum.PENDING_PAYMENT.getCode());
+        order.setRemark(remark);
+        orderMapper.insert(order);
+
+        item.setOrderId(order.getId());
+        orderItemMapper.insert(item);
+
+        // DB 侧扣减 SKU 库存：Redis 预扣的是"活动额度"，SKU 库存才是账。
+        // 走条件更新（stock >= quantity），即便活动额度配置有误也不会把 SKU 扣成负数。
+        try {
+            productFeignClient.deductStock(skuId, quantity);
+        } catch (Exception e) {
+            log.error("秒杀扣减库存失败: orderNo={}, skuId={}, quantity={}", orderNo, skuId, quantity, e);
+            throw new BusinessException(ResultCode.STOCK_INSUFFICIENT, "库存不足");
+        }
+
+        fillAddressSnapshot(order, addressId, userId);
+
+        log.info("秒杀订单创建成功: orderNo={}, userId={}, skuId={}, quantity={}, seckillPrice={}",
+                orderNo, userId, skuId, quantity, seckillPrice);
+        return getById(order.getId(), userId);
+    }
+
+    @Override
     public OrderDTO getById(Long id, Long userId) {
         OrderEntity order = orderMapper.selectById(id);
         if (order == null) {

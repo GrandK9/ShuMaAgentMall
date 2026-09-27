@@ -193,6 +193,52 @@ CREATE TABLE `order_item` (
   KEY `idx_order_no` (`order_no`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单明细表';
 
+-- 秒杀活动表
+CREATE TABLE `seckill_activity` (
+  `id`              BIGINT        NOT NULL AUTO_INCREMENT COMMENT '活动ID',
+  `name`            VARCHAR(100)  NOT NULL                COMMENT '活动名称',
+  `sku_id`          BIGINT        NOT NULL                COMMENT '参与秒杀的 SKU ID',
+  `product_id`      BIGINT        NOT NULL                COMMENT '商品ID',
+  `seckill_price`   DECIMAL(10,2) NOT NULL                COMMENT '秒杀价',
+  `total_stock`     INT           NOT NULL                COMMENT '活动库存总量',
+  `per_user_limit`  INT           DEFAULT 1               COMMENT '每人限购数量',
+  `start_time`      DATETIME      NOT NULL                COMMENT '开始时间',
+  `end_time`        DATETIME      NOT NULL                COMMENT '结束时间',
+  `status`          TINYINT       DEFAULT 0               COMMENT '状态 0-未上线 1-已上线 2-已结束',
+  `created_at`      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_sku_id` (`sku_id`),
+  KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='秒杀活动表';
+
+-- 秒杀资格记录表（同时是本地消息表与一人一单的数据库兜底）
+-- Redis 预扣成功后先写入本表再发 MQ：只发消息不落库的话，MQ 丢消息会导致
+-- Redis 库存白扣、用户永远等不到订单，且没有任何线索可以复盘。
+CREATE TABLE `seckill_order` (
+  `id`            BIGINT        NOT NULL AUTO_INCREMENT COMMENT '资格记录ID',
+  `request_id`    VARCHAR(64)   NOT NULL                COMMENT '请求唯一标识（客户端一次抢购一个）',
+  `activity_id`   BIGINT        NOT NULL                COMMENT '活动ID',
+  `user_id`       BIGINT        NOT NULL                COMMENT '用户ID',
+  `sku_id`        BIGINT        NOT NULL                COMMENT 'SKU ID',
+  `quantity`      INT           DEFAULT 1               COMMENT '购买数量',
+  `seckill_price` DECIMAL(10,2) NOT NULL                COMMENT '成交价（活动价快照）',
+  `address_id`    BIGINT        NOT NULL                COMMENT '收货地址ID（对账重投消息时用于还原建单参数）',
+  `remark`        VARCHAR(200)  DEFAULT NULL            COMMENT '订单备注',
+  `order_no`      VARCHAR(32)   DEFAULT NULL            COMMENT '建单成功后的订单号',
+  `status`        TINYINT       DEFAULT 0               COMMENT '状态 0-待建单 1-已建单 2-建单失败已回补 3-订单已取消已回补 4-建单中',
+  `fail_reason`   VARCHAR(255)  DEFAULT NULL            COMMENT '失败原因',
+  `created_at`    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  -- 消费幂等 / 消息去重键
+  UNIQUE KEY `uk_request_id` (`request_id`),
+  -- 一人一单的数据库兜底：即使 Redis 全挂、资格占位丢失，同一用户也无法在同一活动重复下单
+  UNIQUE KEY `uk_activity_user` (`activity_id`, `user_id`),
+  -- 对账任务按「状态 + 落库时间」扫描滞留记录
+  KEY `idx_status_created` (`status`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='秒杀资格记录表';
+
 -- ==================== 支付服务 ====================
 
 -- 支付记录表

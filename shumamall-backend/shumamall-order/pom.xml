@@ -71,6 +71,12 @@
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
+        <!-- RabbitMQ：秒杀异步建单（生产端投递 + 手动 ack 消费 + 死信兜底） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+
         <!-- Seata：分布式事务（AT 模式）。下单要跨 order（本地建单）与 product（远程扣库存），
              本地 @Transactional 只管住自己的库，扣库存成功后的失败不会退回已扣库存。 -->
         <dependency>

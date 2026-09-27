@@ -27,7 +27,8 @@ public class WebConfig {
     public FilterRegistrationBean<TokenFilter> tokenFilterRegistration() {
         FilterRegistrationBean<TokenFilter> registration = new FilterRegistrationBean<>();
         registration.setFilter(new TokenFilter(jwtUtils));
-        registration.addUrlPatterns("/api/v1/cart/*", "/api/v1/orders/*", "/api/v1/admin/orders/*");
+        registration.addUrlPatterns("/api/v1/cart/*", "/api/v1/orders/*", "/api/v1/admin/orders/*",
+                "/api/v1/seckill/*", "/api/v1/admin/seckill/*");
         registration.setOrder(1);
         return registration;
     }
