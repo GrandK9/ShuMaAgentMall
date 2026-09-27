@@ -1,0 +1,220 @@
+services:
+  # =================== MySQL 8 ===================
+  mysql:
+    image: mysql:8.0
+    container_name: shumamall-mysql
+    networks: [shumamall-net]
+    restart: unless-stopped
+    mem_limit: 512m
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: shumamall
+      MYSQL_CHARACTER_SET_SERVER: utf8mb4
+      MYSQL_COLLATION_SERVER: utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot123"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =================== Redis 7 ===================
+  redis:
+    image: redis:7-alpine
+    container_name: shumamall-redis
+    networks: [shumamall-net]
+    restart: unless-stopped
+    mem_limit: 128m
+    ports:
+      # 宿主端口用 16379 而不是 6379：本机 Windows 的 winnat 把 6379 圈进了它的
+      # 动态保留段（`netsh interface ipv4 show excludedportrange protocol=tcp` 可见
+      # 6241-6340 覆盖了 6379），此时任何进程绑定 6379 都会报
+      # "bind: An attempt was made to access a socket in a way forbidden by its access permissions"。
+      # 容器内仍是 6379（各服务用服务名 redis:6379 连接），所以只影响「从宿主机直连 redis」。
+      # 想恢复标准映射：以管理员执行 `net stop winnat` + `net start winnat` 释放保留段，
+      # 再把这里改回 "6379:6379"。
+      - "16379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =================== Nacos 2.x ===================
+  nacos:
+    image: nacos/nacos-server:v2.3.2
+    container_name: shumamall-nacos
+    networks: [shumamall-net]
+    restart: unless-stopped
+    mem_limit: 768m
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+    environment:
+      MODE: standalone
+      JVM_XMS: 256m
+      JVM_XMX: 512m
+    volumes:
+      - nacos-data:/home/nacos/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8848/nacos/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # =================== RabbitMQ ===================
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: shumamall-rabbitmq
+    networks: [shumamall-net]
+    restart: unless-stopped
+    mem_limit: 256m
+    ports:
+      - "5672:5672"    # AMQP
+      - "15672:15672"  # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: shumamall
+      RABBITMQ_DEFAULT_PASS: shumamall123
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # =================== MinIO ===================
+  minio:
+    image: minio/minio:latest
+    container_name: shumamall-minio
+    networks: [shumamall-net]
+    restart: unless-stopped
+    mem_limit: 256m
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Console
+    environment:
+      MINIO_ROOT_USER: shumamall
+      MINIO_ROOT_PASSWORD: shumamall123
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # =================== MongoDB 7 ===================
+  mongo:
+    image: mongo:7
+    container_name: shumamall-mongo
+    networks: [shumamall-net]
+    restart: unless-stopped
+    mem_limit: 512m
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: shumamall
+      MONGO_INITDB_ROOT_PASSWORD: shumamall123
+      MONGO_INITDB_DATABASE: shumamall
+    volumes:
+      - mongo-data:/data/db
+      - ./mongo-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: mongosh --eval 'db.adminCommand("ping")' --quiet
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # =================== Seata Server ===================
+  seata:
+    # TC（事务协调器）用本地已有的 seataio/seata-server:2.0.0 镜像。曾尝试升到
+    # apache/seata-server:2.5.0 与 SCA 2025 管理的 org.apache.seata:2.5.0 客户端对齐，
+    # 但该镜像有一层在本地 Docker Hub 镜像源上始终拉不下来（挂 10 分钟无进展），遂维持 2.0.0。
+    # 实测跨代可用：2.5.0 客户端有 io.seata 兼容层（启动日志 "Load compatible class
+    # io.seata.discovery.registry.RegistryProvider"），全局事务 begin / 分支注册 / 回滚均正常。
+    image: seataio/seata-server:2.0.0
+    container_name: shumamall-seata
+    networks: [shumamall-net]
+    restart: unless-stopped
+    mem_limit: 768m
+    ports:
+      - "8091:8091"   # TC 的 RPC 端口（= 控制台端口 7091 + 1000）
+      - "7091:7091"   # Seata 控制台
+    environment:
+      # 该镜像的 seata-setup.sh 只认 JVM_XMX / JVM_XMS / LOG_HOME / JMX_* 等变量。
+      # 注意 SEATA_IP / SEATA_PORT / STORE_MODE 是 apache/seata-server 镜像入口脚本才处理的，
+      # 写在这里完全无效（镜像内检索 SEATA_IP / seata.ip 均无命中）。
+      # 该镜像默认 registry.type=file、store.mode=file（见 /seata-server/resources/application.yml），
+      # 即本就不注册到 Nacos，所以也不存在「注册 IP 用容器内网地址导致宿主机连不上」的问题——
+      # 客户端侧改用 seata.service.grouplist 直连 127.0.0.1:8091（见各服务 bootstrap.yml）。
+      JVM_XMX: 512m
+      JVM_XMS: 256m
+      LOG_HOME: /root/logs/seata
+    volumes:
+      - seata-data:/seata-server/sessionStore
+      - ./seata-logs:/root/logs/seata
+    healthcheck:
+      test: ["CMD", "sh", "-c", "grep -q 'Server started' /root/logs/seata/seata-server.8091.all.log"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  # =================== Elasticsearch 8.x ===================
+  elasticsearch:
+    # 8.18.8 与后端用的 ES Java client 版本一致（Spring Boot 3.5.15 BOM 管理的是
+    # co.elastic.clients:elasticsearch-java:8.18.8）。原先用 8.13.0 时 client 比服务端新，
+    # cluster.health 响应解不了，actuator 的聚合健康端点会恒为 DOWN。
+    # 注意：es-plugins/ik 里的 IK 分词插件必须同版本，见 es-plugins/fetch-ik.ps1。
+    image: elasticsearch:8.18.8
+    container_name: shumamall-es
+    networks: [shumamall-net]
+    restart: unless-stopped
+    mem_limit: 1g
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - ingest.geoip.downloader.enabled=false
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+      # IK 中文分词插件（宿主机预置，随容器挂载，避免每次重建丢失）
+      - ./es-plugins/ik:/usr/share/elasticsearch/plugins/ik
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9200/_cluster/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  mysql-data:
+  redis-data:
+  nacos-data:
+  rabbitmq-data:
+  minio-data:
+  mongo-data:
+  seata-data:
+  es-data:
+
+# 固定网络名（而不是用 <项目名>_default 自动命名）：
+# docker-compose.app.yml（应用层）以 external 方式引用同一张网络，
+# 写死名字才不会因为启动目录/项目名不同而找不到网络。
+networks:
+  shumamall-net:
+    name: shumamall-net

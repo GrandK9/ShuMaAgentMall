@@ -1,0 +1,12 @@
+# shumamall-permission.yaml —— 权限服务端口与数据源覆盖（Nacos 配置中心）
+# dataId: shumamall-permission.yaml / group: DEFAULT_GROUP / namespace: shumamall
+# 权限服务使用独立库 shumamall_perm。
+
+server:
+  port: 8086
+
+spring:
+  application:
+    name: shumamall-permission
+  datasource:
+    url: jdbc:mysql://localhost:3306/shumamall_perm?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&allowMultiQueries=true

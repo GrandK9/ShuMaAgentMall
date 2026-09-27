@@ -1,0 +1,26 @@
+# ============================================================
+# shumamall-agent.yaml —— Agent 服务专属配置（Nacos 配置中心）
+#
+# dataId   : shumamall-agent.yaml
+# group    : DEFAULT_GROUP
+# namespace: shumamall
+#
+# 为什么单独抽一个 dataId：LLM 与 embedding 的 api-key 是**真实付费凭据**，
+# 不能留在 application.yml 里当默认值（提交即泄露）。这里只放密钥，
+# 其余非敏感配置仍在 shumamall-agent 的 application.yml。
+#
+# 这是**模板**：两个占位符发布前替换为真实值，真实值文件不要提交到仓库。
+# ============================================================
+
+spring:
+  ai:
+    openai:
+      # DeepSeek（OpenAI 兼容协议）对话模型密钥
+      api-key: "<DEEPSEEK_API_KEY>"
+
+shumamall:
+  agent:
+    search:
+      embedding:
+        # 向量模型（BAAI/bge-large-zh-v1.5）密钥，与对话模型分离配置
+        api-key: "<EMBEDDING_API_KEY>"

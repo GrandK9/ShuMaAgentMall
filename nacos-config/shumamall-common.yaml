@@ -1,0 +1,101 @@
+# ============================================================
+# shumamall-common.yaml —— 全服务共享配置（Nacos 配置中心）
+#
+# dataId   : shumamall-common.yaml
+# group    : DEFAULT_GROUP
+# namespace: shumamall
+#
+# 这是**模板**：下面两处密钥是占位符。发布前请复制成一份本地文件、填入真实值，
+# 再用 nacos-config/publish.ps1 发布。真实值文件不要提交到仓库。
+# ============================================================
+
+spring:
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: shumamall
+    password: shumamall123
+    virtual-host: /
+  cloud:
+    openfeign:
+      # 开启熔断：Feign 调用统一走 Resilience4j 断路器（CLOSED→OPEN→HALF_OPEN，
+      # 参数见下方 resilience4j.circuitbreaker），对所有 @FeignClient 生效。
+      # 注意降级范围：只有 comment 的 UserFeignClient / ProductFeignClient 配了 fallbackFactory；
+      # 未配的客户端开路时抛 CallNotPermittedException / NoFallbackAvailableException，
+      # 由调用方 catch 转业务错误码。关键写路径（下单扣库存、支付回调订单）刻意不降级，理由见各类注释。
+      circuitbreaker:
+        enabled: true
+      client:
+        config:
+          default:
+            # Feign 默认 connectTimeout=10s / readTimeout=60s。
+            # 下游「连接被拒」时 try/catch 能兜住；但下游「变慢」（GC 停顿、线程池打满、
+            # 网络抖动）时请求线程会被拖住最长 60 秒，且每次请求都会重新打一遍慢下游，
+            # 调用方 Web 线程池迅速耗尽 —— 这就是级联故障的传播路径。
+            # 因此统一收到秒级，配合下面的熔断让慢下游被快速失败。
+            connectTimeout: 2000
+            readTimeout: 5000
+            # 单个客户端需要更长耗时（如全量灌库）时按客户端名覆盖，例如：
+            #   shumamall-product:
+            #     readTimeout: 30000
+    circuitbreaker:
+      resilience4j:
+        # 关键开关：禁止 Resilience4j 用独立线程池执行 Feign 调用。
+        # 默认（false）时 Spring Cloud CircuitBreaker 会把调用提交到 newCachedThreadPool 的
+        # 线程上执行，调用方线程的 ThreadLocal 全部丢失 —— 实测会引出两个故障：
+        #   1) MDC 里的 traceId 不再写入 X-Trace-Id 头（全链路日志串不起来）；
+        #   2) Seata 的 RootContext XID 读不到，TX_XID 头不下发，下游不会加入全局事务，
+        #      扣库存退化成"独立提交"，全局回滚时无法补偿（实测 sku 库存白扣 1 件）。
+        # 置 true 后改用信号量隔离，调用仍在调用方线程执行，ThreadLocal 完整保留。
+        disableThreadPool: true
+
+# Resilience4j 熔断参数：滑动窗口统计 → 失败率超阈值开路 → 半开态探测恢复
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        slidingWindowType: COUNT_BASED
+        # 最近 10 次调用参与失败率统计
+        slidingWindowSize: 10
+        # 至少 5 次调用后才开始判定，避免启动初期样本过少误开路
+        minimumNumberOfCalls: 5
+        # 失败率 >= 50% 时打开熔断
+        failureRateThreshold: 50
+        # 打开后 10 秒内直接短路（抛 CallNotPermittedException，不再发起网络调用），
+        # 由 fallbackFactory 返回降级值，或由调用方按失败处理
+        waitDurationInOpenState: 10s
+        # 半开态允许 3 次探测调用
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+  timelimiter:
+    configs:
+      default:
+        # 兜底时限，设为略高于 Feign readTimeout，两者取先到者
+        timeoutDuration: 6s
+        cancelRunningFuture: true
+
+shumamall:
+  auth:
+    jwt:
+      # JWT 签名密钥统一由配置中心下发，各服务本地不再保留副本。
+      # 要求 HS256 至少 256 位（32 字节）随机串。生成：openssl rand -base64 48
+      secret: "<JWT_SECRET>"
+      expiration: 86400
+  crypto:
+    # 敏感字段 AES-256-CBC 加密密钥（32 字节 Base64）。仅存配置中心，不落代码仓库。
+    # 生成：openssl rand -base64 32
+    aes-key: "<AES_KEY_BASE64_32BYTES>"
+
+logging:
+  level:
+    com.shumamall: INFO
+    org.springframework.cloud: INFO
+    # 熔断状态迁移（CLOSED→OPEN→HALF_OPEN）会打在这里，便于排查级联故障
+    io.github.resilience4j.circuitbreaker: info
+  pattern:
+    # 控制台日志格式由配置中心统一下发：带 traceId 占位符，便于全链路检索
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId}] %-5level %logger{36} - %msg%n"
