@@ -17,6 +17,7 @@ import com.shumamall.order.dto.OrderDTO;
 import com.shumamall.order.entity.OrderEntity;
 import com.shumamall.order.entity.OrderItemEntity;
 import com.shumamall.order.enums.OrderStatusEnum;
+import com.shumamall.order.timeout.mq.OrderTimeoutMessageProducer;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -47,10 +48,11 @@ class OrderServiceImplTest {
     private final ProductFeignClient productFeignClient = mock(ProductFeignClient.class);
     private final UserFeignClient userFeignClient = mock(UserFeignClient.class);
     private final CartMapper cartMapper = mock(CartMapper.class);
+    private final OrderTimeoutMessageProducer orderTimeoutMessageProducer = mock(OrderTimeoutMessageProducer.class);
 
     private final OrderServiceImpl service =
             new OrderServiceImpl(orderMapper, orderItemMapper, productFeignClient,
-                    userFeignClient, cartMapper, new ObjectMapper());
+                    userFeignClient, cartMapper, new ObjectMapper(), orderTimeoutMessageProducer);
 
     private OrderEntity order(Long id, Long userId, int status) {
         OrderEntity order = new OrderEntity();

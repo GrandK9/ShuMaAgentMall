@@ -29,15 +29,18 @@ import com.shumamall.order.entity.OrderEntity;
 import com.shumamall.order.entity.OrderItemEntity;
 import com.shumamall.order.enums.OrderStatusEnum;
 import com.shumamall.order.service.OrderService;
+import com.shumamall.order.timeout.mq.OrderTimeoutMessageProducer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.seata.spring.annotation.GlobalTransactional;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -63,6 +66,13 @@ public class OrderServiceImpl implements OrderService {
     private final UserFeignClient userFeignClient;
     private final CartMapper cartMapper;
     private final ObjectMapper objectMapper;
+    private final OrderTimeoutMessageProducer orderTimeoutMessageProducer;
+
+    @Value("${shumamall.order.pay-timeout-minutes:30}")
+    private int payTimeoutMinutes;
+
+    @Value("${shumamall.order.pay-timeout-ms:0}")
+    private long payTimeoutMs;
 
     private static final Random RANDOM = new Random();
     private static final DateTimeFormatter ORDER_NO_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
@@ -163,6 +173,7 @@ public class OrderServiceImpl implements OrderService {
 
             log.info("购物车结算下单成功: orderNo={}, userId={}, amount={}, itemCount={}",
                     orderNo, userId, totalAmount, items.size());
+            orderTimeoutMessageProducer.scheduleTimeoutCheck(order.getId(), orderNo);
             return getById(order.getId(), userId);
 
         } else {
@@ -220,6 +231,7 @@ public class OrderServiceImpl implements OrderService {
             fillAddressSnapshot(order, dto.getAddressId(), userId);
 
             log.info("订单创建成功: orderNo={}, userId={}, amount={}", orderNo, userId, totalAmount);
+            orderTimeoutMessageProducer.scheduleTimeoutCheck(order.getId(), orderNo);
             return getById(order.getId(), userId);
         }
     }
@@ -288,6 +300,7 @@ public class OrderServiceImpl implements OrderService {
 
         log.info("秒杀订单创建成功: orderNo={}, userId={}, skuId={}, quantity={}, seckillPrice={}",
                 orderNo, userId, skuId, quantity, seckillPrice);
+        orderTimeoutMessageProducer.scheduleTimeoutCheck(order.getId(), orderNo);
         return getById(order.getId(), userId);
     }
 
@@ -521,12 +534,12 @@ public class OrderServiceImpl implements OrderService {
     }
 
     /**
-     * 定时任务：每60秒扫描超时未支付订单并自动取消。
+     * 定时扫描超过支付宽限期且仍为待付款的订单并取消；用于补偿延迟消息未投递或消费失败的情况。
      */
-    @Scheduled(fixedRate = 60000)
-    @Transactional(rollbackFor = Exception.class)
+    @Scheduled(fixedDelayString = "${shumamall.order.timeout.reconcile-scan-ms:600000}")
     public void scheduledTimeoutCancel() {
-        LocalDateTime deadline = LocalDateTime.now().minusMinutes(30);
+        Duration payGrace = payTimeoutMs > 0 ? Duration.ofMillis(payTimeoutMs) : Duration.ofMinutes(payTimeoutMinutes);
+        LocalDateTime deadline = LocalDateTime.now().minus(payGrace);
         LambdaQueryWrapper<OrderEntity> wrapper = new LambdaQueryWrapper<OrderEntity>()
                 .eq(OrderEntity::getStatus, OrderStatusEnum.PENDING_PAYMENT.getCode())
                 .lt(OrderEntity::getCreatedAt, deadline);
