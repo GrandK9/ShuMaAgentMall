@@ -52,8 +52,11 @@ public class UploadSessionDoc {
     /** 校验档位 comment / admin（决定时长/大小上限） */
     private String limitType;
 
-    /** 会话状态 uploading / uploaded / processed */
+    /** 会话状态 uploading / merging / uploaded / processed / failed */
     private String status;
+
+    /** 会话失败原因（如转码队列已满） */
+    private String failReason;
 
     /** 已上传的分片索引列表（断点续传查询用） */
     private List<Integer> chunks = new ArrayList<>();

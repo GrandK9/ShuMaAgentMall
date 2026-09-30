@@ -2,9 +2,12 @@ package com.shumamall.video.config;
 
 import io.minio.MinioClient;
 import lombok.Data;
+import okhttp3.OkHttpClient;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * MinIO 对象存储配置。
@@ -41,10 +44,17 @@ public class MinioConfig {
      * @return MinioClient 实例
      */
     @Bean
-    public MinioClient minioClient() {
+    public MinioClient minioClient(VideoProperties videoProperties) {
+        VideoProperties.Io io = videoProperties.getIo();
+        OkHttpClient httpClient = new OkHttpClient.Builder()
+                .connectTimeout(io.getConnectTimeoutSeconds(), TimeUnit.SECONDS)
+                .readTimeout(io.getReadIdleTimeoutSeconds(), TimeUnit.SECONDS)
+                .writeTimeout(io.getWriteIdleTimeoutSeconds(), TimeUnit.SECONDS)
+                .build();
         return MinioClient.builder()
                 .endpoint(endpoint)
                 .credentials(accessKey, secretKey)
+                .httpClient(httpClient)
                 .build();
     }
 }

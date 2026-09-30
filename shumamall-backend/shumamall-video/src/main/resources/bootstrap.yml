@@ -41,6 +41,22 @@ minio:
 video:
   ffprobe-path: ffprobe
   ffmpeg-path: ffmpeg
+  task:
+    max-seconds: 7200
+  io:
+    connect-timeout-seconds: 15
+    read-idle-timeout-seconds: 120
+    write-idle-timeout-seconds: 60
+    download-max-seconds-admin: 1800
+    download-max-seconds-comment: 300
+    upload-object-max-seconds: 300
+  transcode:
+    pool-size: 2
+    queue-capacity: 5
+    ffprobe-timeout-seconds: 30
+    hls-timeout-seconds-admin: 3600
+    hls-timeout-seconds-comment: 300
+    thumbnail-timeout-seconds: 30
 
 # JWT 密钥不再本地兜底：spring.config.import 导入的配置优先级低于本地文件，
 # 本地留副本会让配置中心下发的密钥永远不生效。唯一来源见 shumamall-common.yaml。

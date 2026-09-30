@@ -19,6 +19,10 @@ import io.minio.RemoveObjectArgs;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -100,11 +104,12 @@ public class VideoUploadServiceImpl implements VideoUploadService {
 
     @Override
     public CompleteUploadRespDTO completeUpload(String sessionId) {
-        UploadSessionDoc session = requireSession(sessionId);
-        if (!VideoConstants.SESSION_UPLOADING.equals(session.getStatus())) {
-            throw new BusinessException(ResultCode.PARAM_INVALID, "会话已处理完成，请勿重复提交");
+        UploadSessionDoc session = claimSessionForMerge(sessionId);
+        if (session == null) {
+            return buildIdempotentCompleteResponse(sessionId);
         }
         if (session.getChunks() == null || session.getChunks().isEmpty()) {
+            releaseMergeClaim(sessionId);
             throw new BusinessException(ResultCode.PARAM_INVALID, "没有可合并的分片");
         }
 
@@ -123,18 +128,20 @@ public class VideoUploadServiceImpl implements VideoUploadService {
                     .sources(sources)
                     .build());
         } catch (Exception e) {
+            releaseMergeClaim(sessionId);
             log.error("合并分片失败: sessionId={}, chunks={}", sessionId, session.getChunks().size(), e);
             throw new BusinessException(ResultCode.SERVER_ERROR, "分片合并失败");
         }
         deleteChunkObjects(sessionId, session.getChunks());
 
-        session.setStatus(VideoConstants.SESSION_UPLOADED);
-        mongoTemplate.save(session);
+        if (!markSessionUploaded(sessionId)) {
+            log.warn("合并已完成但会话状态未从 merging 更新为 uploaded: sessionId={}", sessionId);
+        }
 
         // 触发后台校验 + HLS 切片
         videoProcessService.processSession(sessionId);
         log.info("分片合并完成，进入后台处理: sessionId={}", sessionId);
-        return new CompleteUploadRespDTO(sessionId, null, session.getStatus());
+        return new CompleteUploadRespDTO(sessionId, null, VideoConstants.SESSION_UPLOADED);
     }
 
     @Override
@@ -196,6 +203,55 @@ public class VideoUploadServiceImpl implements VideoUploadService {
      */
     private String chunkObject(String sessionId, Integer chunkIndex) {
         return "raw/" + sessionId + "/chunk_" + chunkIndex;
+    }
+
+    /**
+     * 原子抢占合并：仅当 status=uploading 时改为 merging，保证同一时刻只有一个 complete 执行 MinIO 合并。
+     *
+     * @return 抢占成功时会话；未抢占到返回 null（由调用方做幂等或提示）
+     */
+    private UploadSessionDoc claimSessionForMerge(String sessionId) {
+        Query query = new Query(Criteria.where("_id").is(sessionId)
+                .and("status").is(VideoConstants.SESSION_UPLOADING));
+        Update update = new Update().set("status", VideoConstants.SESSION_MERGING);
+        return mongoTemplate.findAndModify(query, update,
+                FindAndModifyOptions.options().returnNew(true),
+                UploadSessionDoc.class);
+    }
+
+    /** 合并失败时释放 merging，允许客户端重试 complete。 */
+    private void releaseMergeClaim(String sessionId) {
+        Query query = new Query(Criteria.where("_id").is(sessionId)
+                .and("status").is(VideoConstants.SESSION_MERGING));
+        Update update = new Update().set("status", VideoConstants.SESSION_UPLOADING);
+        mongoTemplate.updateFirst(query, update, UploadSessionDoc.class);
+    }
+
+    /** 合并成功后 merging → uploaded（条件更新）。 */
+    private boolean markSessionUploaded(String sessionId) {
+        Query query = new Query(Criteria.where("_id").is(sessionId)
+                .and("status").is(VideoConstants.SESSION_MERGING));
+        Update update = new Update().set("status", VideoConstants.SESSION_UPLOADED);
+        return mongoTemplate.updateFirst(query, update, UploadSessionDoc.class).getModifiedCount() > 0;
+    }
+
+    /**
+     * 并发 complete 的幂等响应：已成功合并或已进入后台处理的会话直接返回当前状态，不再触发合并/转码。
+     */
+    private CompleteUploadRespDTO buildIdempotentCompleteResponse(String sessionId) {
+        UploadSessionDoc current = requireSession(sessionId);
+        String status = current.getStatus();
+        if (VideoConstants.SESSION_UPLOADED.equals(status)
+                || VideoConstants.SESSION_PROCESSED.equals(status)) {
+            return new CompleteUploadRespDTO(sessionId, current.getVideoId(), status);
+        }
+        if (VideoConstants.SESSION_MERGING.equals(status)) {
+            throw new BusinessException(ResultCode.PARAM_INVALID, "分片合并处理中，请稍后刷新");
+        }
+        if (VideoConstants.SESSION_FAILED.equals(status)) {
+            throw new BusinessException(ResultCode.PARAM_INVALID, "上传会话已失败，请重新上传");
+        }
+        throw new BusinessException(ResultCode.PARAM_INVALID, "会话已处理完成，请勿重复提交");
     }
 
     /**

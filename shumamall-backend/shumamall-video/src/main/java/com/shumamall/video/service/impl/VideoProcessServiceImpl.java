@@ -4,12 +4,15 @@ import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shumamall.video.config.MinioConfig;
+import com.shumamall.video.config.VideoProperties;
+import com.shumamall.video.config.VideoTranscodeExecutor;
 import com.shumamall.video.constant.VideoConstants;
 import com.shumamall.video.dto.UploadRespDTO;
 import com.shumamall.video.entity.UploadSessionDoc;
 import com.shumamall.video.entity.VideoMetaDoc;
 import com.shumamall.video.exception.VideoValidationException;
 import com.shumamall.video.service.VideoProcessService;
+import com.shumamall.video.support.ProcessTaskDeadline;
 import io.minio.GetObjectArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
@@ -18,23 +21,21 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
+import java.io.FilterInputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -58,6 +59,8 @@ public class VideoProcessServiceImpl implements VideoProcessService {
     private final MinioClient minioClient;
     private final MinioConfig minioConfig;
     private final MongoTemplate mongoTemplate;
+    private final VideoTranscodeExecutor videoTranscodeExecutor;
+    private final VideoProperties videoProperties;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${video.ffprobe-path:ffprobe}")
@@ -66,16 +69,13 @@ public class VideoProcessServiceImpl implements VideoProcessService {
     @Value("${video.ffmpeg-path:ffmpeg}")
     private String ffmpegPath;
 
-    /** HLS 切片异步处理线程池（CPU 密集任务，默认 2） */
-    private final ExecutorService processExecutor = Executors.newFixedThreadPool(2);
-
     /** m3u8 播放清单中分片条目匹配正则：#EXTINF:duration, 换行 filename */
     private static final Pattern EXTINF_PATTERN = Pattern.compile(
             "#EXTINF:([0-9.]+),[^\\r\\n]*\\r?\\n([^\\r\\n]+)");
 
     @Override
     public void processSession(String sessionId) {
-        processExecutor.submit(() -> doProcessSession(sessionId));
+        videoTranscodeExecutor.scheduleSessionTranscode(sessionId, () -> doProcessSession(sessionId));
     }
 
     @Override
@@ -99,25 +99,28 @@ public class VideoProcessServiceImpl implements VideoProcessService {
                 rawObject, file.getSize(), null);
         mongoTemplate.insert(meta);
 
-        File tempFile = downloadToTemp(minioConfig.getRawBucket(), rawObject);
-        try {
-            runProcess(meta, tempFile);
-        } finally {
-            deleteQuietly(tempFile);
-        }
+        long taskMaxSeconds = videoProperties.getTask().getMaxSeconds();
+        ProcessTaskDeadline.runWithDeadline(taskMaxSeconds, () -> {
+            File tempFile = downloadToTemp(minioConfig.getRawBucket(), rawObject, limitType);
+            try {
+                runProcess(meta, tempFile);
+            } finally {
+                deleteQuietly(tempFile);
+            }
+        });
         return new UploadRespDTO(meta.getVideoId(), meta.getStatus(),
                 meta.getPlaylistUrl(), meta.getFailReason());
     }
 
     @Override
     public void reTranscode(VideoMetaDoc meta) {
-        processExecutor.submit(() -> {
+        videoTranscodeExecutor.scheduleRetranscode(meta, () -> {
             meta.setStatus(VideoConstants.STATUS_VALIDATING);
             meta.setFailReason(null);
             meta.setHlsSegments(new ArrayList<>());
             mongoTemplate.save(meta);
 
-            File tempFile = downloadToTemp(minioConfig.getRawBucket(), meta.getRawObject());
+            File tempFile = downloadToTemp(minioConfig.getRawBucket(), meta.getRawObject(), meta.getLimitType());
             try {
                 runProcess(meta, tempFile);
             } finally {
@@ -155,7 +158,7 @@ public class VideoProcessServiceImpl implements VideoProcessService {
         session.setStatus(VideoConstants.SESSION_PROCESSED);
         mongoTemplate.save(session);
 
-        File tempFile = downloadToTemp(minioConfig.getRawBucket(), mergedObject);
+        File tempFile = downloadToTemp(minioConfig.getRawBucket(), mergedObject, limitType);
         try {
             runProcess(meta, tempFile);
         } finally {
@@ -189,6 +192,7 @@ public class VideoProcessServiceImpl implements VideoProcessService {
      * @param source 本地临时源文件
      */
     private void runProcess(VideoMetaDoc meta, File source) {
+        ProcessTaskDeadline.check();
         try {
             ProbeResult probe = probe(source);
             validate(probe, meta.getLimitType(), meta.getFileSize());
@@ -199,11 +203,11 @@ public class VideoProcessServiceImpl implements VideoProcessService {
             meta.setWidth(probe.getWidth());
             meta.setHeight(probe.getHeight());
 
-            List<VideoMetaDoc.HlsSegment> segments = transcode(source, meta.getVideoId());
+            List<VideoMetaDoc.HlsSegment> segments = transcode(source, meta.getVideoId(), meta.getLimitType());
             meta.setHlsSegments(segments);
             meta.setPlaylistUrl("hls/" + meta.getVideoId() + "/index.m3u8");
             // 缩略图生成失败不阻塞主流程，仅告警（可播放优先）
-            generateThumbnail(meta, source);
+            generateThumbnail(meta, source, meta.getLimitType());
             meta.setStatus(VideoConstants.STATUS_TRANSCODED);
             meta.setTranscodedAt(LocalDateTime.now());
             log.info("视频校验 + HLS 切片完成: videoId={}, duration={}s, segments={}",
@@ -229,7 +233,7 @@ public class VideoProcessServiceImpl implements VideoProcessService {
     private ProbeResult probe(File file) {
         List<String> cmd = List.of(ffprobePath, "-v", "quiet", "-print_format", "json",
                 "-show_format", "-show_streams", file.getAbsolutePath());
-        ExecResult result = exec(cmd, 30);
+        ExecResult result = exec(cmd, videoProperties.getTranscode().getFfprobeTimeoutSeconds());
         if (result.getExitCode() != 0) {
             throw new VideoValidationException("无法读取视频信息（ffprobe 失败）");
         }
@@ -304,7 +308,7 @@ public class VideoProcessServiceImpl implements VideoProcessService {
      * @param videoId 视频 ID
      * @return 分片列表
      */
-    private List<VideoMetaDoc.HlsSegment> transcode(File source, Long videoId) throws Exception {
+    private List<VideoMetaDoc.HlsSegment> transcode(File source, Long videoId, String limitType) throws Exception {
         Path outDir = Files.createTempDirectory("hls-" + videoId);
         Path playlist = outDir.resolve("index.m3u8");
 
@@ -314,7 +318,7 @@ public class VideoProcessServiceImpl implements VideoProcessService {
                 "-hls_time", "6", "-hls_playlist_type", "vod",
                 "-hls_segment_filename", outDir.resolve("segment_%03d.ts").toString(),
                 playlist.toString());
-        ExecResult result = exec(cmd, 300);
+        ExecResult result = exec(cmd, videoProperties.getTranscode().hlsTimeoutSecondsFor(limitType));
         if (result.getExitCode() != 0) {
             throw new VideoValidationException("HLS 切片失败: " + truncate(result.getOutput(), 200));
         }
@@ -341,7 +345,7 @@ public class VideoProcessServiceImpl implements VideoProcessService {
      * @param meta   视频元数据
      * @param source 本地源文件
      */
-    private void generateThumbnail(VideoMetaDoc meta, File source) {
+    private void generateThumbnail(VideoMetaDoc meta, File source, String limitType) {
         try {
             Path thumbDir = Files.createTempDirectory("thumb-" + meta.getVideoId());
             Path thumbFile = thumbDir.resolve("thumb.jpg");
@@ -352,7 +356,7 @@ public class VideoProcessServiceImpl implements VideoProcessService {
                 List<String> cmd = List.of(ffmpegPath, "-y", "-ss", String.valueOf(seek),
                         "-i", source.getAbsolutePath(), "-vframes", "1", "-q:v", "2",
                         thumbFile.toString());
-                ExecResult result = exec(cmd, 30);
+                ExecResult result = exec(cmd, videoProperties.getTranscode().getThumbnailTimeoutSeconds());
                 if (result.getExitCode() != 0) {
                     throw new VideoValidationException("缩略图生成失败: " + truncate(result.getOutput(), 200));
                 }
@@ -404,14 +408,27 @@ public class VideoProcessServiceImpl implements VideoProcessService {
      * @param object 对象路径
      * @return 临时文件
      */
-    private File downloadToTemp(String bucket, String object) {
+    private File downloadToTemp(String bucket, String object, String limitType) {
+        long downloadMaxSeconds = videoProperties.getIo().downloadMaxSecondsFor(limitType);
         try {
             Path tempFile = Files.createTempFile("video-", ".mp4");
+            long downloadDeadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(downloadMaxSeconds);
+            byte[] buffer = new byte[8192];
             try (InputStream in = minioClient.getObject(
-                    GetObjectArgs.builder().bucket(bucket).object(object).build())) {
-                Files.copy(in, tempFile, StandardCopyOption.REPLACE_EXISTING);
+                    GetObjectArgs.builder().bucket(bucket).object(object).build());
+                 OutputStream out = Files.newOutputStream(tempFile)) {
+                int read;
+                while ((read = in.read(buffer)) != -1) {
+                    ProcessTaskDeadline.check();
+                    if (System.nanoTime() > downloadDeadlineNanos) {
+                        throw new VideoValidationException("原始视频下载超时");
+                    }
+                    out.write(buffer, 0, read);
+                }
             }
             return tempFile.toFile();
+        } catch (VideoValidationException e) {
+            throw e;
         } catch (Exception e) {
             log.error("MinIO 下载失败: bucket={}, object={}, error={}", bucket, object, e.getMessage());
             throw new VideoValidationException("原始视频读取失败");
@@ -427,14 +444,47 @@ public class VideoProcessServiceImpl implements VideoProcessService {
      */
     private void uploadFileToMinio(String bucket, String object, File file) {
         try {
-            minioClient.putObject(PutObjectArgs.builder()
-                    .bucket(bucket)
-                    .object(object)
-                    .stream(Files.newInputStream(file.toPath()), file.length(), -1)
-                    .build());
+            long maxSeconds = videoProperties.getIo().getUploadObjectMaxSeconds();
+            try (InputStream in = openBoundedUploadStream(file.toPath(), maxSeconds)) {
+                minioClient.putObject(PutObjectArgs.builder()
+                        .bucket(bucket)
+                        .object(object)
+                        .stream(in, file.length(), -1)
+                        .build());
+            }
+        } catch (VideoValidationException e) {
+            throw e;
         } catch (Exception e) {
             throw new VideoValidationException("HLS 分片上传失败: " + e.getMessage());
         }
+    }
+
+    /**
+     * 上传流：结合任务总 deadline 与单对象上传上限。
+     */
+    private InputStream openBoundedUploadStream(Path path, long objectMaxSeconds) throws IOException {
+        long objectDeadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(objectMaxSeconds);
+        InputStream raw = Files.newInputStream(path);
+        return new FilterInputStream(raw) {
+            private void guard() {
+                ProcessTaskDeadline.check();
+                if (System.nanoTime() > objectDeadlineNanos) {
+                    throw new VideoValidationException("对象上传超时");
+                }
+            }
+
+            @Override
+            public int read(byte[] b, int off, int len) throws IOException {
+                guard();
+                return super.read(b, off, len);
+            }
+
+            @Override
+            public int read() throws IOException {
+                guard();
+                return super.read();
+            }
+        };
     }
 
     /**
@@ -450,6 +500,7 @@ public class VideoProcessServiceImpl implements VideoProcessService {
      * @return 执行结果
      */
     private ExecResult exec(List<String> cmd, long timeoutSeconds) {
+        ProcessTaskDeadline.check();
         Path outFile = null;
         try {
             outFile = Files.createTempFile("exec-", ".log");

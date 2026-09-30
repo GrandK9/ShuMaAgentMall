@@ -27,11 +27,17 @@ public final class VideoConstants {
     /** 分片上传中 */
     public static final String SESSION_UPLOADING = "uploading";
 
+    /** 分片合并进行中（complete 原子抢占，防止并发双合并） */
+    public static final String SESSION_MERGING = "merging";
+
     /** 分片已合并，待后台处理 */
     public static final String SESSION_UPLOADED = "uploaded";
 
     /** 会话处理完成（含失败），videoId 已回填 */
     public static final String SESSION_PROCESSED = "processed";
+
+    /** 转码任务被拒绝或处理失败（如队列已满） */
+    public static final String SESSION_FAILED = "failed";
 
     // ==================== 视频元数据状态 ====================
 
@@ -103,4 +109,7 @@ public final class VideoConstants {
 
     /** 播放签名 URL 有效期（秒，1 小时） */
     public static final int PLAY_URL_EXPIRY_SECONDS = 3600;
+
+    /** 转码线程池满载时的统一提示 */
+    public static final String TRANSCODE_BUSY_MESSAGE = "系统转码任务繁忙，请稍后重试";
 }
