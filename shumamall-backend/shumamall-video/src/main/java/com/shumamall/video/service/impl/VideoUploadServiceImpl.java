@@ -15,6 +15,7 @@ import io.minio.ComposeObjectArgs;
 import io.minio.ComposeSource;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
+import io.minio.RemoveObjectArgs;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -32,7 +33,7 @@ import java.util.stream.Collectors;
  * 视频上传服务实现。
  * <p>
  * 分片上传：initUpload（MongoDB 会话，TTL 24h）→ uploadChunk（MinIO raw 分片）
- * → completeUpload（composeObject 合并 + 异步校验切片）。
+ * → completeUpload（composeObject 合并、同步删除分片 + 异步校验切片）。
  * 单次直传：评论区小文件直接落 raw → 同步校验 + 切片。
  */
 @Slf4j
@@ -125,6 +126,7 @@ public class VideoUploadServiceImpl implements VideoUploadService {
             log.error("合并分片失败: sessionId={}, chunks={}", sessionId, session.getChunks().size(), e);
             throw new BusinessException(ResultCode.SERVER_ERROR, "分片合并失败");
         }
+        deleteChunkObjects(sessionId, session.getChunks());
 
         session.setStatus(VideoConstants.SESSION_UPLOADED);
         mongoTemplate.save(session);
@@ -194,5 +196,28 @@ public class VideoUploadServiceImpl implements VideoUploadService {
      */
     private String chunkObject(String sessionId, Integer chunkIndex) {
         return "raw/" + sessionId + "/chunk_" + chunkIndex;
+    }
+
+    /**
+     * 合并成功后删除 MinIO 分片对象；失败仅记日志，由定时任务兜底。
+     */
+    private void deleteChunkObjects(String sessionId, List<Integer> chunkIndexes) {
+        if (chunkIndexes == null || chunkIndexes.isEmpty()) {
+            return;
+        }
+        int removed = 0;
+        for (Integer index : chunkIndexes) {
+            try {
+                minioClient.removeObject(RemoveObjectArgs.builder()
+                        .bucket(minioConfig.getRawBucket())
+                        .object(chunkObject(sessionId, index))
+                        .build());
+                removed++;
+            } catch (Exception e) {
+                log.warn("删除分片失败（定时任务将兜底）: sessionId={}, chunk={}, error={}",
+                        sessionId, index, e.getMessage());
+            }
+        }
+        log.info("合并后清理分片: sessionId={}, 删除 {}/{} 个", sessionId, removed, chunkIndexes.size());
     }
 }

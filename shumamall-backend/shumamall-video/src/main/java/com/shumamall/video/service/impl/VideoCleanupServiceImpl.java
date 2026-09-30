@@ -1,6 +1,7 @@
 package com.shumamall.video.service.impl;
 
 import com.shumamall.video.config.MinioConfig;
+import com.shumamall.video.constant.VideoConstants;
 import com.shumamall.video.entity.UploadSessionDoc;
 import com.shumamall.video.entity.VideoMetaDoc;
 import com.shumamall.video.service.VideoCleanupService;
@@ -27,9 +28,10 @@ import java.util.Set;
 /**
  * 视频残留清理服务实现。
  * <p>
- * 每小时扫描 MinIO raw bucket 的 {@code raw/{sessionId}/} 目录：
- * 删除未被 {@code video_metadata.rawObject} 引用的对象（合并后残留的分片、
- * 未完成上传的半成品）；被引用的 merged.mp4 / source.mp4 保留（重转码源）。
+ * 每 6 小时扫描 MinIO raw bucket 的 {@code raw/{sessionId}/} 目录（跳过未过期的
+ * {@code uploading} 会话，避免误删进行中的分片）：
+ * 删除未被 {@code video_metadata.rawObject} 引用的对象（合并失败残留的分片、
+ * 过期未完成上传的半成品）；被引用的 merged.mp4 / source.mp4 保留（重转码源）。
  * 若对应上传会话文档已过期（TTL 兜底），一并主动删除。
  */
 @Slf4j
@@ -37,15 +39,12 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class VideoCleanupServiceImpl implements VideoCleanupService {
 
-    /** 清理间隔（毫秒）：1 小时 */
-    private static final long CLEANUP_INTERVAL_MS = 3600000;
-
     private final MongoTemplate mongoTemplate;
     private final MinioClient minioClient;
     private final MinioConfig minioConfig;
 
     @Override
-    @Scheduled(fixedDelay = CLEANUP_INTERVAL_MS)
+    @Scheduled(fixedDelay = VideoConstants.CLEANUP_INTERVAL_MS)
     public void cleanupExpiredSessions() {
         List<String> prefixes;
         try {
@@ -93,6 +92,12 @@ public class VideoCleanupServiceImpl implements VideoCleanupService {
      * @throws Exception MinIO 操作失败
      */
     private void cleanupPrefix(String prefix) throws Exception {
+        String sessionId = extractSessionId(prefix);
+        if (shouldSkipActiveUpload(sessionId)) {
+            log.debug("跳过进行中的上传目录: prefix={}", prefix);
+            return;
+        }
+
         // 1. 列出该目录下全部对象
         List<String> objects = new ArrayList<>();
         Iterable<Result<Item>> results = minioClient.listObjects(
@@ -132,7 +137,6 @@ public class VideoCleanupServiceImpl implements VideoCleanupService {
                 prefix, removed, referenced.size());
 
         // 4. 若对应上传会话文档已过期（TTL 兜底），主动删除
-        String sessionId = extractSessionId(prefix);
         if (StringUtils.hasText(sessionId)) {
             UploadSessionDoc session = mongoTemplate.findById(sessionId, UploadSessionDoc.class);
             if (session != null && session.getExpireAt() != null
@@ -142,6 +146,23 @@ public class VideoCleanupServiceImpl implements VideoCleanupService {
                         sessionId, session.getStatus());
             }
         }
+    }
+
+    /**
+     * 未过期的 uploading 会话仍可能在上传分片，整目录跳过清理。
+     */
+    private boolean shouldSkipActiveUpload(String sessionId) {
+        if (!StringUtils.hasText(sessionId)) {
+            return false;
+        }
+        UploadSessionDoc session = mongoTemplate.findById(sessionId, UploadSessionDoc.class);
+        if (session == null) {
+            return false;
+        }
+        if (!VideoConstants.SESSION_UPLOADING.equals(session.getStatus())) {
+            return false;
+        }
+        return session.getExpireAt() != null && session.getExpireAt().isAfter(LocalDateTime.now());
     }
 
     /**

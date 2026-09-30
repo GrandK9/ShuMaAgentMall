@@ -98,6 +98,9 @@ public final class VideoConstants {
     /** 上传会话 TTL（小时），MongoDB TTL 索引自动过期 */
     public static final long SESSION_TTL_HOURS = 24;
 
+    /** MinIO raw 残留清理间隔（毫秒，6 小时） */
+    public static final long CLEANUP_INTERVAL_MS = 6L * 3600 * 1000;
+
     /** 播放签名 URL 有效期（秒，1 小时） */
     public static final int PLAY_URL_EXPIRY_SECONDS = 3600;
 }
