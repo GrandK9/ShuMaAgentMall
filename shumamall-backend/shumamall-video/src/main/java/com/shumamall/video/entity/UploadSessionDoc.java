@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.Data;
 import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
@@ -16,9 +15,9 @@ import java.util.List;
  * <p>
  * 管理端大文件分片上传的会话记录：前端每次上传前创建会话，
  * 每片直接写入 MinIO {@code raw/{sessionId}/chunk_{index}}，
- * 全部传完后 {@code completeUpload} 合并分片并触发后台校验 + HLS 切片。
+ * 全部传完后 {@code completeUpload} 合并分片、创建 {@code video_metadata}、清理分片与会话并异步转码。
  * <p>
- * {@code expireAt} 上建 TTL 索引，24 小时自动过期，由清理任务兜底删除 MinIO 残留分片。
+ * 转码成功后删除 MinIO 分片并移除本会话文档；{@code expireAt} 用于识别过期未完成上传。
  */
 @Data
 @Document(collection = "upload_session")
@@ -52,7 +51,7 @@ public class UploadSessionDoc {
     /** 校验档位 comment / admin（决定时长/大小上限） */
     private String limitType;
 
-    /** 会话状态 uploading / merging / uploaded / processed / failed */
+    /** 会话状态 uploading / merging / uploaded / processed / failed / cleanup_failed */
     private String status;
 
     /** 会话失败原因（如转码队列已满） */
@@ -74,7 +73,6 @@ public class UploadSessionDoc {
     /** 创建时间 */
     private LocalDateTime createdAt;
 
-    /** 过期时间（TTL 索引自动删除） */
-    @Indexed(expireAfterSeconds = 0)
+    /** 会话过期时间（未完成上传超时判定） */
     private LocalDateTime expireAt;
 }

@@ -13,13 +13,20 @@ import org.springframework.web.multipart.MultipartFile;
 public interface VideoProcessService {
 
     /**
-     * 异步处理分片上传会话（合并完成后触发）。
-     * <p>
-     * 流程：下载合并文件 → 创建元数据 → 校验 → HLS 切片 → 回填会话 videoId。
+     * 合并完成后创建视频元数据（幂等：同一 sessionId 仅一条 meta）。
      *
-     * @param sessionId 会话 ID
+     * @param sessionId 上传会话 ID
+     * @return 元数据（含 videoId）
      */
-    void processSession(String sessionId);
+    VideoMetaDoc createMetaForMergedUpload(String sessionId);
+
+    /**
+     * 异步转码：校验 + HLS 切片，更新已存在的元数据。
+     *
+     * @param sessionId 上传会话 ID（队列拒绝时写回状态）
+     * @param videoId   视频 ID
+     */
+    void processSession(String sessionId, Long videoId);
 
     /**
      * 同步处理单次直传文件（评论区小文件场景）。

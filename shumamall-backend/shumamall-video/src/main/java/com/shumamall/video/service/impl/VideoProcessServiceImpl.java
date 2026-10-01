@@ -21,6 +21,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -74,8 +76,31 @@ public class VideoProcessServiceImpl implements VideoProcessService {
             "#EXTINF:([0-9.]+),[^\\r\\n]*\\r?\\n([^\\r\\n]+)");
 
     @Override
-    public void processSession(String sessionId) {
-        videoTranscodeExecutor.scheduleSessionTranscode(sessionId, () -> doProcessSession(sessionId));
+    public VideoMetaDoc createMetaForMergedUpload(String sessionId) {
+        VideoMetaDoc existing = mongoTemplate.findOne(
+                new Query(Criteria.where("sessionId").is(sessionId)), VideoMetaDoc.class);
+        if (existing != null) {
+            return existing;
+        }
+        UploadSessionDoc session = mongoTemplate.findById(sessionId, UploadSessionDoc.class);
+        if (session == null) {
+            throw new VideoValidationException("上传会话不存在，无法创建视频元数据");
+        }
+        String mergedObject = "raw/" + sessionId + "/merged.mp4";
+        VideoMetaDoc meta = buildMeta(session.getUploaderId(), session.getUploaderType(),
+                session.getSourceType(), session.getLimitType(), mergedObject,
+                session.getFileSize(), sessionId);
+        mongoTemplate.insert(meta);
+        session.setVideoId(meta.getVideoId());
+        mongoTemplate.save(session);
+        log.info("合并完成，已创建视频元数据: sessionId={}, videoId={}", sessionId, meta.getVideoId());
+        return meta;
+    }
+
+    @Override
+    public void processSession(String sessionId, Long videoId) {
+        videoTranscodeExecutor.scheduleSessionTranscode(sessionId,
+                () -> doProcessVideo(videoId));
     }
 
     @Override
@@ -132,33 +157,15 @@ public class VideoProcessServiceImpl implements VideoProcessService {
     // ==================== 私有方法 ====================
 
     /**
-     * 异步处理分片上传会话。
-     *
-     * @param sessionId 会话 ID
+     * 异步转码：更新已存在的元数据。
      */
-    private void doProcessSession(String sessionId) {
-        UploadSessionDoc session = mongoTemplate.findById(sessionId, UploadSessionDoc.class);
-        if (session == null) {
-            log.warn("处理分片会话失败：会话不存在 sessionId={}", sessionId);
+    private void doProcessVideo(Long videoId) {
+        VideoMetaDoc meta = mongoTemplate.findById(videoId, VideoMetaDoc.class);
+        if (meta == null) {
+            log.warn("转码任务跳过：元数据不存在 videoId={}", videoId);
             return;
         }
-        String mergedObject = "raw/" + sessionId + "/merged.mp4";
-        String limitType = session.getLimitType();
-        VideoMetaDoc meta = buildMeta(session.getUploaderId(), session.getUploaderType(),
-                session.getSourceType(), limitType, mergedObject, session.getFileSize(), sessionId);
-
-        try {
-            mongoTemplate.insert(meta);
-        } catch (Exception e) {
-            log.error("创建视频元数据失败: sessionId={}", sessionId, e);
-            return;
-        }
-        // 回填会话 videoId 并标记处理完成
-        session.setVideoId(meta.getVideoId());
-        session.setStatus(VideoConstants.SESSION_PROCESSED);
-        mongoTemplate.save(session);
-
-        File tempFile = downloadToTemp(minioConfig.getRawBucket(), mergedObject, limitType);
+        File tempFile = downloadToTemp(minioConfig.getRawBucket(), meta.getRawObject(), meta.getLimitType());
         try {
             runProcess(meta, tempFile);
         } finally {

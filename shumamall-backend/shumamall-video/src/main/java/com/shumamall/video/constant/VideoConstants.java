@@ -39,6 +39,9 @@ public final class VideoConstants {
     /** 转码任务被拒绝或处理失败（如队列已满） */
     public static final String SESSION_FAILED = "failed";
 
+    /** HLS 转码成功但 MinIO 分片未清理干净，由定时任务重试 */
+    public static final String SESSION_CLEANUP_FAILED = "cleanup_failed";
+
     // ==================== 视频元数据状态 ====================
 
     /** 上传中（尚未进入校验） */
@@ -101,7 +104,7 @@ public final class VideoConstants {
     /** 单分片大小（5MB） */
     public static final int CHUNK_SIZE = 5 * 1024 * 1024;
 
-    /** 上传会话 TTL（小时），MongoDB TTL 索引自动过期 */
+    /** 上传会话有效期（小时），过期未完成上传由定时任务清理 */
     public static final long SESSION_TTL_HOURS = 24;
 
     /** MinIO raw 残留清理间隔（毫秒，6 小时） */

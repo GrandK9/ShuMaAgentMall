@@ -10,6 +10,8 @@ import com.shumamall.video.support.ProcessTaskDeadline;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ArrayBlockingQueue;
@@ -92,14 +94,19 @@ public class VideoTranscodeExecutor {
 
     private void markSessionTranscodeBusy(String sessionId) {
         UploadSessionDoc session = mongoTemplate.findById(sessionId, UploadSessionDoc.class);
-        if (session == null) {
-            log.warn("转码队列已满，但会话不存在: sessionId={}", sessionId);
-            return;
+        if (session != null) {
+            session.setStatus(VideoConstants.SESSION_FAILED);
+            session.setFailReason(VideoConstants.TRANSCODE_BUSY_MESSAGE);
+            mongoTemplate.save(session);
         }
-        session.setStatus(VideoConstants.SESSION_FAILED);
-        session.setFailReason(VideoConstants.TRANSCODE_BUSY_MESSAGE);
-        mongoTemplate.save(session);
-        log.warn("转码队列已满，会话已标记失败: sessionId={}", sessionId);
+        VideoMetaDoc meta = mongoTemplate.findOne(
+                new Query(Criteria.where("sessionId").is(sessionId)), VideoMetaDoc.class);
+        if (meta != null) {
+            meta.setStatus(VideoConstants.STATUS_FAILED);
+            meta.setFailReason(VideoConstants.TRANSCODE_BUSY_MESSAGE);
+            mongoTemplate.save(meta);
+        }
+        log.warn("转码队列已满，已标记失败: sessionId={}", sessionId);
     }
 
     private void markMetaTranscodeBusy(VideoMetaDoc meta) {

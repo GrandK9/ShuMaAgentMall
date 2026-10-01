@@ -172,7 +172,7 @@ async function findResumableUpload(file: File): Promise<SavedUpload | null> {
  * 分片上传并合并分片。
  *
  * @param file 待上传文件
- * @returns 会话 ID（后续轮询处理结果用）
+ * @returns 视频 ID（字符串雪花 ID，后续轮询转码状态）
  */
 async function uploadByChunks(file: File): Promise<string> {
   const saved = await findResumableUpload(file);
@@ -215,30 +215,23 @@ async function uploadByChunks(file: File): Promise<string> {
   }
 
   uploadStage.value = '分片合并中…';
-  await completeVideoUpload(sessionId);
+  const complete = await completeVideoUpload(sessionId);
+  if (!complete.videoId) {
+    throw new Error('合并完成但未返回视频 ID');
+  }
   // 合并成功即视为上传阶段结束，清掉本地记录；后续失败重试走服务端重转码，不再续传
   localStorage.removeItem(SESSION_STORAGE_KEY);
-  return sessionId;
+  return complete.videoId;
 }
 
 /**
- * 轮询后台处理结果：先等上传会话落到 processed 拿到 videoId，再等元数据落到 transcoded / failed。
+ * 轮询元数据直至转码完成或失败。
  *
- * @param sessionId 上传会话 ID
- * @returns 最终元数据；超时返回 null
+ * @param videoId 视频 ID（字符串雪花 ID）
  */
-async function pollProcessing(sessionId: string): Promise<VideoMeta | null> {
-  // 雪花 ID 用字符串承载：19 位超出 JS 安全整数范围，转 number 会失真
-  let videoId: string | undefined;
+async function pollProcessing(videoId: string): Promise<VideoMeta | null> {
   for (let round = 0; round < POLL_MAX_ROUNDS; round += 1) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-    if (!videoId) {
-      const session = await getVideoUploadSession(sessionId);
-      if (session.status === 'processed') {
-        videoId = session.videoId;
-      }
-      continue;
-    }
     const meta = await getVideoMeta(videoId);
     if (meta.status === 'transcoded' || meta.status === 'failed') {
       return meta;
@@ -264,10 +257,10 @@ async function onFilePicked(event: Event): Promise<void> {
     const info = await precheck(file);
     uploadStage.value = `预检通过：${info.width}×${info.height} / ${info.duration.toFixed(1)}s / ${formatSize(file.size)}`;
 
-    const sessionId = await uploadByChunks(file);
+    const videoId = await uploadByChunks(file);
 
     uploadStage.value = '服务端 ffprobe 校验 + HLS 切片中…';
-    const meta = await pollProcessing(sessionId);
+    const meta = await pollProcessing(videoId);
     if (!meta) {
       ElMessage.warning('处理超时，请稍后刷新列表查看结果');
     } else if (meta.status === 'transcoded') {

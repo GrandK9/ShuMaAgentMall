@@ -9,13 +9,14 @@ import com.shumamall.video.dto.InitUploadReqDTO;
 import com.shumamall.video.dto.InitUploadRespDTO;
 import com.shumamall.video.dto.UploadRespDTO;
 import com.shumamall.video.entity.UploadSessionDoc;
+import com.shumamall.video.entity.VideoMetaDoc;
+import com.shumamall.video.service.UploadSessionCleanupService;
 import com.shumamall.video.service.VideoProcessService;
 import com.shumamall.video.service.VideoUploadService;
 import io.minio.ComposeObjectArgs;
 import io.minio.ComposeSource;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
-import io.minio.RemoveObjectArgs;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -37,7 +38,7 @@ import java.util.stream.Collectors;
  * 视频上传服务实现。
  * <p>
  * 分片上传：initUpload（MongoDB 会话，TTL 24h）→ uploadChunk（MinIO raw 分片）
- * → completeUpload（composeObject 合并、同步删除分片 + 异步校验切片）。
+ * → completeUpload（composeObject 合并 → 创建 meta → 清理分片与会话 → 异步转码）。
  * 单次直传：评论区小文件直接落 raw → 同步校验 + 切片。
  */
 @Slf4j
@@ -49,6 +50,7 @@ public class VideoUploadServiceImpl implements VideoUploadService {
     private final MinioClient minioClient;
     private final MinioConfig minioConfig;
     private final VideoProcessService videoProcessService;
+    private final UploadSessionCleanupService uploadSessionCleanupService;
 
     @Override
     public InitUploadRespDTO initUpload(Long uploaderId, InitUploadReqDTO dto) {
@@ -132,16 +134,16 @@ public class VideoUploadServiceImpl implements VideoUploadService {
             log.error("合并分片失败: sessionId={}, chunks={}", sessionId, session.getChunks().size(), e);
             throw new BusinessException(ResultCode.SERVER_ERROR, "分片合并失败");
         }
-        deleteChunkObjects(sessionId, session.getChunks());
-
         if (!markSessionUploaded(sessionId)) {
             log.warn("合并已完成但会话状态未从 merging 更新为 uploaded: sessionId={}", sessionId);
         }
 
-        // 触发后台校验 + HLS 切片
-        videoProcessService.processSession(sessionId);
-        log.info("分片合并完成，进入后台处理: sessionId={}", sessionId);
-        return new CompleteUploadRespDTO(sessionId, null, VideoConstants.SESSION_UPLOADED);
+        VideoMetaDoc meta = videoProcessService.createMetaForMergedUpload(sessionId);
+        uploadSessionCleanupService.finalizeSessionAfterMerge(sessionId);
+        videoProcessService.processSession(sessionId, meta.getVideoId());
+
+        log.info("分片合并完成，进入后台处理: sessionId={}, videoId={}", sessionId, meta.getVideoId());
+        return new CompleteUploadRespDTO(sessionId, meta.getVideoId(), VideoConstants.SESSION_UPLOADED);
     }
 
     @Override
@@ -239,11 +241,23 @@ public class VideoUploadServiceImpl implements VideoUploadService {
      * 并发 complete 的幂等响应：已成功合并或已进入后台处理的会话直接返回当前状态，不再触发合并/转码。
      */
     private CompleteUploadRespDTO buildIdempotentCompleteResponse(String sessionId) {
-        UploadSessionDoc current = requireSession(sessionId);
+        UploadSessionDoc current = mongoTemplate.findById(sessionId, UploadSessionDoc.class);
+        if (current == null) {
+            VideoMetaDoc meta = findMetaBySessionId(sessionId);
+            if (meta != null) {
+                return new CompleteUploadRespDTO(sessionId, meta.getVideoId(), VideoConstants.SESSION_UPLOADED);
+            }
+            throw new BusinessException(ResultCode.NOT_FOUND, "上传会话不存在或已过期");
+        }
         String status = current.getStatus();
         if (VideoConstants.SESSION_UPLOADED.equals(status)
                 || VideoConstants.SESSION_PROCESSED.equals(status)) {
-            return new CompleteUploadRespDTO(sessionId, current.getVideoId(), status);
+            Long videoId = current.getVideoId();
+            if (videoId == null) {
+                VideoMetaDoc meta = findMetaBySessionId(sessionId);
+                videoId = meta != null ? meta.getVideoId() : null;
+            }
+            return new CompleteUploadRespDTO(sessionId, videoId, status);
         }
         if (VideoConstants.SESSION_MERGING.equals(status)) {
             throw new BusinessException(ResultCode.PARAM_INVALID, "分片合并处理中，请稍后刷新");
@@ -251,29 +265,19 @@ public class VideoUploadServiceImpl implements VideoUploadService {
         if (VideoConstants.SESSION_FAILED.equals(status)) {
             throw new BusinessException(ResultCode.PARAM_INVALID, "上传会话已失败，请重新上传");
         }
+        if (VideoConstants.SESSION_CLEANUP_FAILED.equals(status)) {
+            VideoMetaDoc meta = findMetaBySessionId(sessionId);
+            if (meta != null) {
+                return new CompleteUploadRespDTO(sessionId, meta.getVideoId(), status);
+            }
+            throw new BusinessException(ResultCode.SERVER_ERROR,
+                    "视频已处理，分片清理未完成，请稍后重试或联系运维");
+        }
         throw new BusinessException(ResultCode.PARAM_INVALID, "会话已处理完成，请勿重复提交");
     }
 
-    /**
-     * 合并成功后删除 MinIO 分片对象；失败仅记日志，由定时任务兜底。
-     */
-    private void deleteChunkObjects(String sessionId, List<Integer> chunkIndexes) {
-        if (chunkIndexes == null || chunkIndexes.isEmpty()) {
-            return;
-        }
-        int removed = 0;
-        for (Integer index : chunkIndexes) {
-            try {
-                minioClient.removeObject(RemoveObjectArgs.builder()
-                        .bucket(minioConfig.getRawBucket())
-                        .object(chunkObject(sessionId, index))
-                        .build());
-                removed++;
-            } catch (Exception e) {
-                log.warn("删除分片失败（定时任务将兜底）: sessionId={}, chunk={}, error={}",
-                        sessionId, index, e.getMessage());
-            }
-        }
-        log.info("合并后清理分片: sessionId={}, 删除 {}/{} 个", sessionId, removed, chunkIndexes.size());
+    private VideoMetaDoc findMetaBySessionId(String sessionId) {
+        return mongoTemplate.findOne(
+                new Query(Criteria.where("sessionId").is(sessionId)), VideoMetaDoc.class);
     }
 }
