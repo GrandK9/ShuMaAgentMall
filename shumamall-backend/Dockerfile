@@ -74,6 +74,13 @@ RUN groupadd --system --gid 1001 appuser \
 # "[NA] failed to write cache for ..." 的 ERROR —— 日志文件写不出去，噪声盖住真问题。
 RUN chown appuser:appuser /app
 
+# 视频服务依赖 ffprobe / ffmpeg 做校验与 HLS 切片；JRE 基础镜像不含这些命令。
+RUN if [ "${MODULE}" = "shumamall-video" ]; then \
+        apt-get update \
+        && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
+
 COPY --from=builder --chown=appuser:appuser /build/app.jar /app/app.jar
 
 USER appuser

@@ -14,8 +14,8 @@ import com.shumamall.video.service.VideoPlayService;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MinioClient;
 import io.minio.http.Method;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -40,13 +40,23 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class VideoPlayServiceImpl implements VideoPlayService {
 
     private final MongoTemplate mongoTemplate;
-    private final MinioClient minioClient;
+    private final MinioClient minioPresignClient;
     private final MinioConfig minioConfig;
     private final StringRedisTemplate stringRedisTemplate;
+
+    public VideoPlayServiceImpl(
+            MongoTemplate mongoTemplate,
+            @Qualifier("minioPresignClient") MinioClient minioPresignClient,
+            MinioConfig minioConfig,
+            StringRedisTemplate stringRedisTemplate) {
+        this.mongoTemplate = mongoTemplate;
+        this.minioPresignClient = minioPresignClient;
+        this.minioConfig = minioConfig;
+        this.stringRedisTemplate = stringRedisTemplate;
+    }
 
     /** 内存累积的播放进度（key=userId:videoId），定时 flush 到 MongoDB */
     private final Map<String, Double> pendingProgress = new ConcurrentHashMap<>();
@@ -65,7 +75,7 @@ public class VideoPlayServiceImpl implements VideoPlayService {
                     meta.getDuration(), null, meta.getFailReason(), null);
         }
         try {
-            String playlistUrl = minioClient.getPresignedObjectUrl(
+            String playlistUrl = minioPresignClient.getPresignedObjectUrl(
                     GetPresignedObjectUrlArgs.builder()
                             .method(Method.GET)
                             .bucket(minioConfig.getHlsBucket())
@@ -73,7 +83,7 @@ public class VideoPlayServiceImpl implements VideoPlayService {
                             .expiry(VideoConstants.PLAY_URL_EXPIRY_SECONDS)
                             .build());
             String thumbUrl = StringUtils.hasText(meta.getThumbnailUrl())
-                    ? minioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+                    ? minioPresignClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
                             .method(Method.GET)
                             .bucket(minioConfig.getThumbBucket())
                             .object(meta.getThumbnailUrl())
@@ -218,7 +228,7 @@ public class VideoPlayServiceImpl implements VideoPlayService {
         }
         for (VideoMetaDoc.HlsSegment segment : meta.getHlsSegments()) {
             try {
-                String signed = minioClient.getPresignedObjectUrl(
+                String signed = minioPresignClient.getPresignedObjectUrl(
                         GetPresignedObjectUrlArgs.builder()
                                 .method(Method.GET)
                                 .bucket(minioConfig.getHlsBucket())

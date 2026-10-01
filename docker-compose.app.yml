@@ -375,6 +375,8 @@ services:
       <<: *common-env
       # 视频元数据单独一个 MongoDB 库
       SPRING_DATA_MONGODB_URI: mongodb://shumamall:shumamall123@mongo:27017/shumamall_video?authSource=admin
+      # 预签名 URL Host 为本机 localhost:9000；容器内 SDK 经 OkHttp 转发到 minio:9000 再签名
+      MINIO_PUBLIC_ENDPOINT: http://localhost:9000
 
   # ========================= 字典 =========================
   dict:
