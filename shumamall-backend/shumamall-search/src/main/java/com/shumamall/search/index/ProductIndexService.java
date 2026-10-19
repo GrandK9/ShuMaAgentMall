@@ -2,6 +2,7 @@ package com.shumamall.search.index;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.mapping.Property;
+import co.elastic.clients.elasticsearch._types.mapping.TextProperty;
 import co.elastic.clients.elasticsearch.indices.CreateIndexRequest;
 import co.elastic.clients.elasticsearch.indices.DeleteIndexRequest;
 import co.elastic.clients.elasticsearch.indices.ExistsRequest;
@@ -15,10 +16,9 @@ import org.springframework.stereotype.Service;
  * {@code shumamall_product} 索引区分，避免 mapping 冲突互相覆盖）。
  * mapping 定义：
  * <ul>
- *   <li>name/subtitle/description：text + 自定义分析器 {@code shumamall_text}
- *       （html_strip 字符过滤器 + ik_max_word 分词器），供 BM25 中文关键词检索；
- *       与 {@code shumamall-agent} 的 {@code shumamall_product} 索引保持同一套分析链，
- *       避免同一商品文本在两套索引下切词不一致</li>
+ *   <li>name/subtitle/description：text。写入用自定义分析器 {@code shumamall_text}
+ *       （html_strip + ik_max_word），倒排里保留细词；查询用 IK 自带的 {@code ik_smart}，
+ *       用户输入按粗词查找。与 {@code shumamall-agent} 的 {@code shumamall_product} 保持同一套分析链</li>
  *   <li>categoryName/brandName/mainImage：keyword，精确匹配/展示</li>
  *   <li>price/salesVolume/createdAt：数值/日期，支持排序与区间过滤</li>
  * </ul>
@@ -30,10 +30,16 @@ public class ProductIndexService {
     /** 商品搜索索引名 */
     public static final String PRODUCT_INDEX = "shumamall_product_search";
 
-    /** 自定义文本分析器名：html_strip + ik_max_word（与 agent 侧命名一致） */
+    /** 写入分析器：html_strip + ik_max_word（与 agent 侧命名一致） */
     public static final String TEXT_ANALYZER = "shumamall_text";
 
-    /** 中文分词器（依赖 ES 安装 analysis-ik 插件） */
+    /**
+     * 查询分析器。IK 插件自带该分析器，mapping 可直接引用，不必在索引 settings 里再注册。
+     * 粗切后的词能在细切倒排里找到，又不会把用户输入拆成碎词去匹配。
+     */
+    public static final String SEARCH_ANALYZER = "ik_smart";
+
+    /** 写入用的中文分词器（依赖 ES 安装 analysis-ik 插件） */
     private static final String TOKENIZER_IK = "ik_max_word";
 
     private final ElasticsearchClient esClient;
@@ -67,9 +73,9 @@ public class ProductIndexService {
                                                     .charFilter("html_strip")))))
                     .mappings(m -> m
                             .properties("id", Property.of(p -> p.long_(l -> l)))
-                            .properties("name", Property.of(p -> p.text(t -> t.analyzer(TEXT_ANALYZER))))
-                            .properties("subtitle", Property.of(p -> p.text(t -> t.analyzer(TEXT_ANALYZER))))
-                            .properties("description", Property.of(p -> p.text(t -> t.analyzer(TEXT_ANALYZER))))
+                            .properties("name", Property.of(p -> p.text(this::textField)))
+                            .properties("subtitle", Property.of(p -> p.text(this::textField)))
+                            .properties("description", Property.of(p -> p.text(this::textField)))
                             .properties("categoryId", Property.of(p -> p.long_(l -> l)))
                             .properties("categoryName", Property.of(p -> p.keyword(k -> k)))
                             .properties("brandId", Property.of(p -> p.long_(l -> l)))
@@ -91,6 +97,11 @@ public class ProductIndexService {
             log.error("商品索引创建失败: index={}, err={}", PRODUCT_INDEX, e.getMessage());
             return false;
         }
+    }
+
+    /** 文本字段：写入细切，查询粗切。 */
+    private TextProperty.Builder textField(TextProperty.Builder builder) {
+        return builder.analyzer(TEXT_ANALYZER).searchAnalyzer(SEARCH_ANALYZER);
     }
 
     /**

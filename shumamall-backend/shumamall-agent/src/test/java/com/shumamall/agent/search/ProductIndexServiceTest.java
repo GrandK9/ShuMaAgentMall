@@ -89,10 +89,12 @@ class ProductIndexServiceTest {
         assertThat(props).containsKeys("id", "name", "brand", "category", "price", "stock",
                 "salesVolume", "description", "embedding");
 
-        // 文本字段走自定义分析器（html_strip + ik_max_word）分词（BM25）
+        // 写入细切，查询粗切
         assertThat(props.get("name").text().analyzer()).isEqualTo(ProductIndexService.TEXT_ANALYZER);
+        assertThat(props.get("name").text().searchAnalyzer()).isEqualTo(ProductIndexService.SEARCH_ANALYZER);
         // 品牌/分类：text 参与分词检索，另带 keyword 子字段保留精确过滤能力
         assertThat(props.get("brand").text().analyzer()).isEqualTo(ProductIndexService.TEXT_ANALYZER);
+        assertThat(props.get("brand").text().searchAnalyzer()).isEqualTo(ProductIndexService.SEARCH_ANALYZER);
         assertThat(props.get("brand").text().fields()).containsKey("keyword");
         // 语义向量 dense_vector + cosine + HNSW 索引
         assertThat(props.get("embedding").denseVector().dims()).isEqualTo(ProductIndexService.EMBEDDING_DIMS);
