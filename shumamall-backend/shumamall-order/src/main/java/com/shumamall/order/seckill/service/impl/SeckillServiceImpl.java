@@ -288,6 +288,28 @@ public class SeckillServiceImpl implements SeckillService {
         }
     }
 
+    @Override
+    public void restoreQuotaForCancelledOrder(String orderNo) {
+        if (orderNo == null || orderNo.isBlank()) {
+            return;
+        }
+        List<SeckillOrderEntity> records = seckillOrderMapper.selectList(new LambdaQueryWrapper<SeckillOrderEntity>()
+                .eq(SeckillOrderEntity::getOrderNo, orderNo)
+                .eq(SeckillOrderEntity::getStatus, SeckillConstants.RECORD_CREATED));
+        if (records == null || records.isEmpty()) {
+            return;
+        }
+        for (SeckillOrderEntity record : records) {
+            // 先占住「已建单 → 已取消」，再回补 Redis。取消与退款可能并发命中同一单，
+            // 后到的 CAS 失败就不再 INCRBY，避免活动额度被加两次。
+            if (!casRecordStatus(record.getId(), SeckillConstants.RECORD_CREATED, SeckillConstants.RECORD_CANCELLED,
+                    "订单已取消，活动额度已回补")) {
+                continue;
+            }
+            rollbackPreheat(record.getActivityId(), record.getUserId(), record.getQuantity(), false);
+        }
+    }
+
     /**
      * 读活动快照：抢购是热点路径，先用 Redis 快照挡住重复查库；快照缺失时回源数据库并重建。
      *
@@ -346,6 +368,24 @@ public class SeckillServiceImpl implements SeckillService {
                 .set(SeckillOrderEntity::getRemark, dto.getRemark())
                 .set(SeckillOrderEntity::getFailReason, null)
                 .set(SeckillOrderEntity::getStatus, SeckillConstants.RECORD_QUEUED);
+        return seckillOrderMapper.update(null, update) > 0;
+    }
+
+    /**
+     * 条件更新资格记录状态，把期望的原状态写进 where。
+     *
+     * @param recordId 记录 ID
+     * @param expected 期望的原状态
+     * @param target   目标状态
+     * @param reason   写入失败原因列的说明
+     * @return 是否更新成功
+     */
+    private boolean casRecordStatus(Long recordId, int expected, int target, String reason) {
+        LambdaUpdateWrapper<SeckillOrderEntity> update = new LambdaUpdateWrapper<SeckillOrderEntity>()
+                .eq(SeckillOrderEntity::getId, recordId)
+                .eq(SeckillOrderEntity::getStatus, expected)
+                .set(SeckillOrderEntity::getStatus, target)
+                .set(SeckillOrderEntity::getFailReason, reason);
         return seckillOrderMapper.update(null, update) > 0;
     }
 

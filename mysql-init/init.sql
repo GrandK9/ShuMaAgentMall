@@ -236,7 +236,9 @@ CREATE TABLE `seckill_order` (
   -- 一人一单的数据库兜底：即使 Redis 全挂、资格占位丢失，同一用户也无法在同一活动重复下单
   UNIQUE KEY `uk_activity_user` (`activity_id`, `user_id`),
   -- 对账任务按「状态 + 落库时间」扫描滞留记录
-  KEY `idx_status_created` (`status`, `created_at`)
+  KEY `idx_status_created` (`status`, `created_at`),
+  -- 取消、超时取消、退款时按订单号定位秒杀资格并回补活动额度
+  KEY `idx_order_no` (`order_no`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='秒杀资格记录表';
 
 -- ==================== 支付服务 ====================

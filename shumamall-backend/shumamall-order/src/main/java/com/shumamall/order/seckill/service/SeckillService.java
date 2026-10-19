@@ -93,4 +93,14 @@ public interface SeckillService {
      *                             false=保留（订单取消，额度退回但本次参与已消耗）
      */
     void rollbackPreheat(Long activityId, Long userId, Integer quantity, boolean releaseQualification);
+
+    /**
+     * 订单取消、超时取消或退款后，按订单号回补秒杀活动额度。
+     * <p>
+     * 订单表本身不区分秒杀单。资格表里有该订单号且仍为「已建单」时，才回补 Redis 活动额度，
+     * 并保留一人一单占位。普通订单或资格已处理过时直接返回。
+     *
+     * @param orderNo 订单号
+     */
+    void restoreQuotaForCancelledOrder(String orderNo);
 }

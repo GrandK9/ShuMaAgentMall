@@ -28,6 +28,7 @@ import com.shumamall.order.entity.CartEntity;
 import com.shumamall.order.entity.OrderEntity;
 import com.shumamall.order.entity.OrderItemEntity;
 import com.shumamall.order.enums.OrderStatusEnum;
+import com.shumamall.order.seckill.service.SeckillService;
 import com.shumamall.order.service.OrderService;
 import com.shumamall.order.timeout.mq.OrderTimeoutMessageProducer;
 import lombok.RequiredArgsConstructor;
@@ -67,6 +68,7 @@ public class OrderServiceImpl implements OrderService {
     private final CartMapper cartMapper;
     private final ObjectMapper objectMapper;
     private final OrderTimeoutMessageProducer orderTimeoutMessageProducer;
+    private final SeckillService seckillService;
 
     @Value("${shumamall.order.pay-timeout-minutes:30}")
     private int payTimeoutMinutes;
@@ -363,6 +365,7 @@ public class OrderServiceImpl implements OrderService {
         }
 
         restoreStockForOrder(order, "用户取消");
+        seckillService.restoreQuotaForCancelledOrder(order.getOrderNo());
 
         log.info("订单已取消: orderNo={}, userId={}", order.getOrderNo(), userId);
     }
@@ -529,6 +532,7 @@ public class OrderServiceImpl implements OrderService {
         }
 
         restoreStockForOrder(order, "超时取消");
+        seckillService.restoreQuotaForCancelledOrder(order.getOrderNo());
 
         log.info("超时订单已取消: orderNo={}", order.getOrderNo());
     }
@@ -629,6 +633,7 @@ public class OrderServiceImpl implements OrderService {
      */
     private void compensateAfterRefund(OrderEntity order) {
         restoreStockForOrder(order, "退款");
+        seckillService.restoreQuotaForCancelledOrder(order.getOrderNo());
         adjustSalesVolume(order, -1);
     }
 

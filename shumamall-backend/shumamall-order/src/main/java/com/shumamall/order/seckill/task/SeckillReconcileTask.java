@@ -2,9 +2,6 @@ package com.shumamall.order.seckill.task;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
-import com.shumamall.order.dao.OrderMapper;
-import com.shumamall.order.entity.OrderEntity;
-import com.shumamall.order.enums.OrderStatusEnum;
 import com.shumamall.order.seckill.constant.SeckillConstants;
 import com.shumamall.order.seckill.dao.SeckillOrderMapper;
 import com.shumamall.order.seckill.entity.SeckillOrderEntity;
@@ -20,16 +17,15 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 秒杀对账任务：以 {@code seckill_order} 资格记录为准，兜住异步链路里的三类缺口。
+ * 秒杀对账任务：以 {@code seckill_order} 资格记录为准，兜住异步建单链路里消息未被消费的缺口。
  * <p>
  * 异步化把「扣库存」和「建订单」拆开了，拆开就必然有中间态落单的可能，本任务负责收口：
  * <ol>
  *   <li>记录停在「待建单」超过阈值 → 消息大概率丢了（broker 重启、发送时连接已断），重投；</li>
- *   <li>记录停在「待建单」过久 → 反复重投都建不出来，回补 Redis 预扣并置失败，让用户能重抢；</li>
- *   <li>记录已「已建单」但订单被取消 → 活动额度还给 Redis（DB 侧 SKU 库存由订单超时取消任务回补）。</li>
+ *   <li>记录停在「待建单」过久 → 反复重投都建不出来，回补 Redis 预扣并置失败，让用户能重抢。</li>
  * </ol>
- * 分工说明：订单超时取消链路的库存回补只回补 SKU 库存，Redis 里的秒杀额度由本任务单独回补，
- * 两者各管一层，不重复扣也不重复补。
+ * 订单取消、超时取消、退款时的活动额度回补发生在订单状态变更处，按订单号查资格表处理，
+ * 不再在这里扫描全部已建单。
  */
 @Slf4j
 @Component
@@ -46,7 +42,6 @@ public class SeckillReconcileTask {
     private static final long PROCESSING_STALE_MINUTES = 10;
 
     private final SeckillOrderMapper seckillOrderMapper;
-    private final OrderMapper orderMapper;
     private final SeckillService seckillService;
     private final SeckillMessageProducer producer;
 
@@ -56,7 +51,6 @@ public class SeckillReconcileTask {
         try {
             requeueStaleQueued(now);
             abandonLongQueued(now);
-            rollbackCancelledOrders();
             warnStuckProcessing(now);
         } catch (Exception e) {
             // 定时任务抛异常会被静默吞掉并停止后续调度，这里兜住，保证下一轮还能跑
@@ -102,33 +96,6 @@ public class SeckillReconcileTask {
                     "对账重投超时，已回补活动额度");
             log.error("秒杀建单长期未完成，已回补并置失败: requestId={}, activityId={}, userId={}",
                     record.getRequestId(), record.getActivityId(), record.getUserId());
-        }
-    }
-
-    /**
-     * 已建单但订单已取消：回补 Redis 活动额度。
-     * <p>
-     * 资格占位保留（{@code releaseQualification=false}）：该用户这次参与已经消耗掉，
-     * 否则用户可以「抢到 → 取消 → 再抢」，把秒杀变成可反复刷的库存搬运。
-     */
-    private void rollbackCancelledOrders() {
-        List<SeckillOrderEntity> created = seckillOrderMapper.selectList(new LambdaQueryWrapper<SeckillOrderEntity>()
-                .eq(SeckillOrderEntity::getStatus, SeckillConstants.RECORD_CREATED)
-                .isNotNull(SeckillOrderEntity::getOrderNo));
-
-        for (SeckillOrderEntity record : created) {
-            OrderEntity order = orderMapper.selectOne(new LambdaQueryWrapper<OrderEntity>()
-                    .eq(OrderEntity::getOrderNo, record.getOrderNo()));
-            if (order == null || order.getStatus() == null
-                    || order.getStatus() != OrderStatusEnum.CANCELLED.getCode()) {
-                continue;
-            }
-            seckillService.rollbackPreheat(record.getActivityId(), record.getUserId(),
-                    record.getQuantity(), false);
-            casStatusWithReason(record.getId(), SeckillConstants.RECORD_CREATED, SeckillConstants.RECORD_CANCELLED,
-                    "订单已取消，活动额度已回补");
-            log.info("秒杀订单已取消，活动额度已回补: requestId={}, orderNo={}",
-                    record.getRequestId(), record.getOrderNo());
         }
     }
 

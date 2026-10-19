@@ -17,6 +17,7 @@ import com.shumamall.order.dto.OrderDTO;
 import com.shumamall.order.entity.OrderEntity;
 import com.shumamall.order.entity.OrderItemEntity;
 import com.shumamall.order.enums.OrderStatusEnum;
+import com.shumamall.order.seckill.service.SeckillService;
 import com.shumamall.order.timeout.mq.OrderTimeoutMessageProducer;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
@@ -49,10 +50,11 @@ class OrderServiceImplTest {
     private final UserFeignClient userFeignClient = mock(UserFeignClient.class);
     private final CartMapper cartMapper = mock(CartMapper.class);
     private final OrderTimeoutMessageProducer orderTimeoutMessageProducer = mock(OrderTimeoutMessageProducer.class);
+    private final SeckillService seckillService = mock(SeckillService.class);
 
     private final OrderServiceImpl service =
             new OrderServiceImpl(orderMapper, orderItemMapper, productFeignClient,
-                    userFeignClient, cartMapper, new ObjectMapper(), orderTimeoutMessageProducer);
+                    userFeignClient, cartMapper, new ObjectMapper(), orderTimeoutMessageProducer, seckillService);
 
     private OrderEntity order(Long id, Long userId, int status) {
         OrderEntity order = new OrderEntity();
@@ -125,7 +127,9 @@ class OrderServiceImplTest {
 
     @Test
     void cancelOrder_success() {
-        when(orderMapper.selectById(1L)).thenReturn(order(1L, 1L, OrderStatusEnum.PENDING_PAYMENT.getCode()));
+        OrderEntity pending = order(1L, 1L, OrderStatusEnum.PENDING_PAYMENT.getCode());
+        pending.setOrderNo("ORD-CANCEL");
+        when(orderMapper.selectById(1L)).thenReturn(pending);
         when(orderItemMapper.selectByOrderId(any())).thenReturn(Collections.emptyList());
         when(orderMapper.update(any(), any())).thenReturn(1);
 
@@ -133,6 +137,7 @@ class OrderServiceImplTest {
 
         // 状态更新改为条件更新（CAS），影响行数 1 表示抢到了状态迁移
         verify(orderMapper).update(any(), any());
+        verify(seckillService).restoreQuotaForCancelledOrder("ORD-CANCEL");
     }
 
     @Test
@@ -146,6 +151,7 @@ class OrderServiceImplTest {
         assertEquals(ResultCode.ORDER_STATUS_INVALID.getCode(), ex.getCode());
         // 抢不到就不该回补库存，否则库存被重复加回
         verify(productFeignClient, never()).restoreStock(any(), any());
+        verify(seckillService, never()).restoreQuotaForCancelledOrder(any());
     }
 
     // ==================== 支付回调状态机 ====================
@@ -205,6 +211,7 @@ class OrderServiceImplTest {
         verify(productFeignClient).restoreStock(10L, 2);
         verify(productFeignClient).restoreStock(11L, 2);
         verify(productFeignClient).updateSalesVolume(100L, -4);
+        verify(seckillService).restoreQuotaForCancelledOrder("ORD001");
     }
 
     @Test
@@ -220,6 +227,20 @@ class OrderServiceImplTest {
         service.updateOrderRefunded("ORD001");
 
         verify(orderMapper).update(any(), any());
+        verify(seckillService).restoreQuotaForCancelledOrder("ORD001");
+    }
+
+    @Test
+    void timeoutCancel_成功时按订单号回补秒杀额度() {
+        OrderEntity pending = order(1L, 1L, OrderStatusEnum.PENDING_PAYMENT.getCode());
+        pending.setOrderNo("ORD-TIMEOUT");
+        when(orderMapper.selectById(1L)).thenReturn(pending);
+        when(orderMapper.update(any(), any())).thenReturn(1);
+        when(orderItemMapper.selectByOrderId(any())).thenReturn(Collections.emptyList());
+
+        service.timeoutCancel(1L);
+
+        verify(seckillService).restoreQuotaForCancelledOrder("ORD-TIMEOUT");
     }
 
     // ==================== 应付金额查询（支付前强校验） ====================

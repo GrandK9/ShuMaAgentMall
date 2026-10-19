@@ -17,7 +17,7 @@ import java.time.LocalDateTime;
  *   <li><b>本地消息表</b>：预扣成功后先落库再发 MQ。只发消息不落库的话，MQ 丢消息时
  *       Redis 库存白扣、用户永远等不到订单，且没有任何线索可以复盘；</li>
  *   <li><b>对账依据</b>：长时间停留在 {@code RECORD_QUEUED} 说明消息可能丢失，可重投；
- *       关联订单已取消则需回补 Redis 库存；</li>
+ *       订单取消时按订单号找到本行，回补 Redis 活动额度；</li>
  *   <li><b>一人一单的数据库兜底</b>：{@code uk_activity_user} 唯一索引保证即使 Redis 全挂、
  *       资格占位丢失，同一用户也无法在同一活动重复下单。</li>
  * </ol>
