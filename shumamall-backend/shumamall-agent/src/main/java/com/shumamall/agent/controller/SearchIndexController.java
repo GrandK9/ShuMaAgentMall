@@ -6,7 +6,11 @@ import com.shumamall.agent.search.embedding.ProductEmbeddingService;
 import com.shumamall.agent.search.service.ProductHybridSearchService;
 import com.shumamall.agent.search.service.ProductIndexService;
 import com.shumamall.agent.search.service.ProductIndexWriter;
+import com.shumamall.common.exception.BusinessException;
 import com.shumamall.common.result.R;
+import com.shumamall.common.result.ResultCode;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -37,19 +41,25 @@ import java.util.Map;
 @RequestMapping("/api/v1/agent/search-index")
 public class SearchIndexController {
 
+    /** 全量重建互斥键。不设租期，由 Redisson 看门狗在任务存活期间续期。 */
+    private static final String REBUILD_LOCK = "agent:index:rebuild";
+
     private final ProductIndexService indexService;
     private final ProductIndexWriter indexWriter;
     private final ProductHybridSearchService hybridSearchService;
     private final ProductEmbeddingService embeddingService;
+    private final RedissonClient redissonClient;
 
     public SearchIndexController(ProductIndexService indexService,
                                  ProductIndexWriter indexWriter,
                                  ProductHybridSearchService hybridSearchService,
-                                 ProductEmbeddingService embeddingService) {
+                                 ProductEmbeddingService embeddingService,
+                                 RedissonClient redissonClient) {
         this.indexService = indexService;
         this.indexWriter = indexWriter;
         this.hybridSearchService = hybridSearchService;
         this.embeddingService = embeddingService;
+        this.redissonClient = redissonClient;
     }
 
     /**
@@ -62,13 +72,34 @@ public class SearchIndexController {
     public R<Map<String, Object>> rebuild(
             @Parameter(description = "是否先删除已有索引再重建，mapping/分词器变更时必须传 true")
             @RequestParam(value = "recreate", defaultValue = "false") boolean recreate) {
-        boolean created = indexService.createIndex(recreate);
-        int written = indexWriter.indexAllProducts();
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("indexCreated", created);
-        result.put("documentCount", written);
-        log.info("索引重建完成: created={}, written={}", created, written);
-        return R.ok(result);
+        RLock lock = redissonClient.getLock(REBUILD_LOCK);
+        if (!acquire(lock)) {
+            throw new BusinessException(ResultCode.CONFLICT, "索引正在重建");
+        }
+        try {
+            boolean created = indexService.createIndex(recreate);
+            int written = indexWriter.indexAllProducts();
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("indexCreated", created);
+            result.put("documentCount", written);
+            log.info("索引重建完成: created={}, written={}", created, written);
+            return R.ok(result);
+        } finally {
+            release(lock);
+        }
+    }
+
+    /**
+     * 立即尝试加锁。看门狗在持锁线程还活着时续期，进程退出后锁自动释放。
+     */
+    private boolean acquire(RLock lock) {
+        return lock.tryLock();
+    }
+
+    private void release(RLock lock) {
+        if (lock.isHeldByCurrentThread()) {
+            lock.unlock();
+        }
     }
 
     /**

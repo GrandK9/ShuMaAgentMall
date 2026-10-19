@@ -1,9 +1,13 @@
 package com.shumamall.search.controller;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import com.shumamall.common.exception.BusinessException;
 import com.shumamall.common.result.R;
+import com.shumamall.common.result.ResultCode;
 import com.shumamall.search.index.ProductIndexService;
 import com.shumamall.search.service.ProductIndexWriter;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -28,9 +32,13 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class IndexAdminController {
 
+    /** 全量重建互斥键。不设租期，由 Redisson 看门狗在任务存活期间续期。 */
+    private static final String REBUILD_LOCK = "search:index:rebuild";
+
     private final ProductIndexWriter productIndexWriter;
     private final ProductIndexService productIndexService;
     private final ElasticsearchClient esClient;
+    private final RedissonClient redissonClient;
 
     /**
      * 全量重建商品索引（删除 → 建 mapping → 拉取商品 → 批量写入）。
@@ -40,9 +48,30 @@ public class IndexAdminController {
     @Operation(summary = "全量重建商品索引（删除 → 建 mapping → 拉取商品 → 批量写入）")
     @PostMapping("/rebuild")
     public R<Integer> rebuild() {
-        int written = productIndexWriter.rebuildIndex();
-        log.info("管理端触发索引重建完成: written={}", written);
-        return R.ok(written);
+        RLock lock = redissonClient.getLock(REBUILD_LOCK);
+        if (!acquire(lock)) {
+            throw new BusinessException(ResultCode.CONFLICT, "索引正在重建");
+        }
+        try {
+            int written = productIndexWriter.rebuildIndex();
+            log.info("管理端触发索引重建完成: written={}", written);
+            return R.ok(written);
+        } finally {
+            release(lock);
+        }
+    }
+
+    /**
+     * 立即尝试加锁。看门狗在持锁线程还活着时续期，进程退出后锁自动释放。
+     */
+    private boolean acquire(RLock lock) {
+        return lock.tryLock();
+    }
+
+    private void release(RLock lock) {
+        if (lock.isHeldByCurrentThread()) {
+            lock.unlock();
+        }
     }
 
     /**

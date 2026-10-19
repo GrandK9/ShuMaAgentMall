@@ -22,7 +22,6 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,7 +29,7 @@ import java.util.Map;
 /**
  * 商品索引灌库服务（全量重建 + 单文档同步）。
  * <p>
- * 全量重建：删除索引 → 重建 mapping → 拉取分类/品牌映射 → 分页拉商品 → bulk 写入。
+ * 全量重建：删除索引 → 重建 mapping → 拉取分类/品牌映射 → 每拉一页就 bulk 写入。
  * 增量同步（RabbitMQ 消费）复用 {@link #syncDoc(ProductDTO)} / {@link #deleteDoc(Long)}。
  */
 @Slf4j
@@ -73,13 +72,47 @@ public class ProductIndexWriter {
             log.error("重建索引失败：索引创建未成功，中止灌库");
             return 0;
         }
-        List<ProductDoc> docs = loadAllProducts();
-        if (docs.isEmpty()) {
-            log.warn("灌库未拉取到任何商品，跳过写入");
-            return 0;
+        int written = writeAllProducts();
+        log.info("灌库完成: written={}", written);
+        return written;
+    }
+
+    /**
+     * 分页拉取商品，每拿到一页就写入 ES，不把全量文档留在内存里。
+     *
+     * @return 实际写入条数
+     */
+    private int writeAllProducts() {
+        Map<Long, String> categoryNames = loadCategoryNames();
+        Map<Long, String> brandNames = loadBrandNames();
+        int written = 0;
+        int total = 0;
+        int page = 1;
+        while (true) {
+            R<PageResult<ProductDTO>> resp = productFeignClient.list(
+                    page, DEFAULT_PAGE_SIZE, null, null, null, null, null, null, null, null, null);
+            if (!resp.isSuccess() || resp.getData() == null) {
+                log.warn("分页拉取失败，终止灌库: page={}, written={}", page, written);
+                break;
+            }
+            PageResult<ProductDTO> pageResult = resp.getData();
+            List<ProductDTO> records = pageResult.getRecords();
+            if (records == null || records.isEmpty()) {
+                break;
+            }
+            List<ProductDoc> pageDocs = records.stream()
+                    .map(item -> toDoc(item, categoryNames, brandNames))
+                    .toList();
+            written += bulkWrite(pageDocs);
+            total += pageDocs.size();
+            if (page >= pageResult.getPages() || records.size() < DEFAULT_PAGE_SIZE) {
+                break;
+            }
+            page++;
         }
-        int written = bulkWrite(docs);
-        log.info("灌库完成: total={}, written={}", docs.size(), written);
+        if (total == 0) {
+            log.warn("灌库未拉取到任何商品，跳过写入");
+        }
         return written;
     }
 
@@ -125,36 +158,6 @@ public class ProductIndexWriter {
             }
             throw e;
         }
-    }
-
-    /**
-     * 分页拉取全部商品（含下架，供管理端搜索）并转换为索引文档。
-     */
-    private List<ProductDoc> loadAllProducts() {
-        Map<Long, String> categoryNames = loadCategoryNames();
-        Map<Long, String> brandNames = loadBrandNames();
-
-        List<ProductDoc> docs = new ArrayList<>();
-        int page = 1;
-        while (true) {
-            R<PageResult<ProductDTO>> resp = productFeignClient.list(
-                    page, DEFAULT_PAGE_SIZE, null, null, null, null, null, null, null, null, null);
-            if (!resp.isSuccess() || resp.getData() == null) {
-                log.warn("分页拉取失败，终止灌库: page={}", page);
-                break;
-            }
-            PageResult<ProductDTO> pageResult = resp.getData();
-            List<ProductDTO> records = pageResult.getRecords();
-            if (records == null || records.isEmpty()) {
-                break;
-            }
-            records.forEach(item -> docs.add(toDoc(item, categoryNames, brandNames)));
-            if (page >= pageResult.getPages() || records.size() < DEFAULT_PAGE_SIZE) {
-                break;
-            }
-            page++;
-        }
-        return docs;
     }
 
     /**

@@ -16,7 +16,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -24,7 +23,7 @@ import java.util.List;
  * <p>
  * 从商品服务分页拉取全量在售商品，为每个商品生成语义向量并批量写入 ES，
  * 使 Agent 的 Hybrid Search（BM25 + KNN）具备数据基础。
- * 流程：创建索引（幂等） → 分页拉取商品 → 向量化 → bulk 批量写入。
+ * 流程：创建索引（幂等） → 每拉一页就向量化并 bulk 写入。
  */
 @Slf4j
 @Service
@@ -53,13 +52,34 @@ public class ProductIndexWriter {
      * @return 实际写入的商品数量（0 表示无数据或全部失败）
      */
     public int indexAllProducts() {
-        List<ProductDoc> docs = loadAllProducts();
-        if (docs.isEmpty()) {
+        int written = 0;
+        int total = 0;
+        int page = 1;
+        while (true) {
+            R<PageResult<ProductItemDTO>> resp = productFeignClient.list(
+                    page, DEFAULT_PAGE_SIZE, null, null, null, 1, null, null, null, null, null);
+            if (!resp.isSuccess() || resp.getData() == null) {
+                log.warn("分页拉取失败，终止灌库: page={}, written={}", page, written);
+                break;
+            }
+            PageResult<ProductItemDTO> pageResult = resp.getData();
+            List<ProductItemDTO> records = pageResult.getRecords();
+            if (records == null || records.isEmpty()) {
+                break;
+            }
+            List<ProductDoc> pageDocs = records.stream().map(this::toDoc).toList();
+            written += bulkWrite(pageDocs);
+            total += pageDocs.size();
+            if (page >= pageResult.getPages() || records.size() < DEFAULT_PAGE_SIZE) {
+                break;
+            }
+            page++;
+        }
+        if (total == 0) {
             log.warn("灌库未拉取到任何商品，跳过写入");
             return 0;
         }
-        int written = bulkWrite(docs);
-        log.info("灌库完成: total={}, written={}", docs.size(), written);
+        log.info("灌库完成: total={}, written={}", total, written);
         return written;
     }
 
@@ -115,33 +135,6 @@ public class ProductIndexWriter {
             }
             throw e;
         }
-    }
-
-    /**
-     * 分页拉取全部在售商品并向量化。
-     */
-    private List<ProductDoc> loadAllProducts() {
-        List<ProductDoc> docs = new ArrayList<>();
-        int page = 1;
-        while (true) {
-            R<PageResult<ProductItemDTO>> resp = productFeignClient.list(
-                    page, DEFAULT_PAGE_SIZE, null, null, null, 1, null, null, null, null, null);
-            if (!resp.isSuccess() || resp.getData() == null) {
-                log.warn("分页拉取失败，终止灌库: page={}", page);
-                break;
-            }
-            PageResult<ProductItemDTO> pageResult = resp.getData();
-            List<ProductItemDTO> records = pageResult.getRecords();
-            if (records == null || records.isEmpty()) {
-                break;
-            }
-            records.forEach(item -> docs.add(toDoc(item)));
-            if (page >= pageResult.getPages() || records.size() < DEFAULT_PAGE_SIZE) {
-                break;
-            }
-            page++;
-        }
-        return docs;
     }
 
     /**
