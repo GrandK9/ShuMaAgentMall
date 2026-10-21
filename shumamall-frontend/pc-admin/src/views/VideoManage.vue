@@ -32,6 +32,7 @@ const POLL_INTERVAL_MS = 2000;
 /** 同一片摘要对不上时最多再传这么多次，仍然失败则保留会话，用户重选同一文件可续传 */
 const CHUNK_VERIFY_ATTEMPTS = 3;
 const CHUNK_CHECKSUM_MISMATCH = '分片校验未通过';
+const CHUNK_LAYOUT_MISMATCH = '分片不完整或大小不符';
 
 const loading = ref(false);
 const videos = ref<VideoMeta[]>([]);
@@ -294,13 +295,15 @@ async function onFilePicked(event: Event): Promise<void> {
     await load(1);
   } catch (e) {
     const message = (e as Error).message;
-    // 校验失败时留下 sessionId。已完成的片还在会话里，用户重选同一个文件可以接着传。
-    if (!message.includes(CHUNK_CHECKSUM_MISMATCH)) {
+    const keepSession = message.includes(CHUNK_CHECKSUM_MISMATCH)
+      || message.includes(CHUNK_LAYOUT_MISMATCH);
+    // 校验或合并被拒绝时留下 sessionId。已完成的片还在会话里，用户重选同一个文件可以接着传。
+    if (!keepSession) {
       localStorage.removeItem(SESSION_STORAGE_KEY);
     }
     ElMessage.error(
-      message.includes(CHUNK_CHECKSUM_MISMATCH)
-        ? '分片校验未通过。请重新选择该文件，已传完的分片会继续使用'
+      keepSession
+        ? `${message}。请重新选择该文件，已传完的分片会继续使用`
         : `上传失败：${message}`,
     );
   } finally {

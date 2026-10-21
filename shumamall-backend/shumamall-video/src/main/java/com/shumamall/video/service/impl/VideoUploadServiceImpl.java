@@ -18,6 +18,9 @@ import io.minio.ComposeSource;
 import io.minio.MinioClient;
 import io.minio.ObjectWriteResponse;
 import io.minio.PutObjectArgs;
+import io.minio.RemoveObjectArgs;
+import io.minio.StatObjectArgs;
+import io.minio.StatObjectResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -32,10 +35,13 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.ByteArrayInputStream;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -53,6 +59,9 @@ public class VideoUploadServiceImpl implements VideoUploadService {
 
     /** 前端据此判断这一片要重传，而不是整次上传作废。 */
     static final String CHUNK_CHECKSUM_MISMATCH = "分片校验未通过";
+
+    /** 片号不连续或字节数对不上时拒绝合并，会话退回 uploading，已传的片可以续传。 */
+    static final String CHUNK_LAYOUT_MISMATCH = "分片不完整或大小不符，无法合并";
 
     private final MongoTemplate mongoTemplate;
     private final MinioClient minioClient;
@@ -134,9 +143,12 @@ public class VideoUploadServiceImpl implements VideoUploadService {
         if (session == null) {
             return buildIdempotentCompleteResponse(sessionId);
         }
-        if (session.getChunks() == null || session.getChunks().isEmpty()) {
+        try {
+            // 合并只按片号拼接。先核对片齐全、非末片都是 5MB、总字节数等于申报大小，否则会把缺片或短片拼进去。
+            assertChunksComplete(session);
+        } catch (BusinessException e) {
             releaseMergeClaim(sessionId);
-            throw new BusinessException(ResultCode.PARAM_INVALID, "没有可合并的分片");
+            throw e;
         }
 
         // 按索引升序合并分片
@@ -222,6 +234,85 @@ public class VideoUploadServiceImpl implements VideoUploadService {
             throw new BusinessException(ResultCode.NOT_FOUND, "上传会话不存在或已过期");
         }
         return session;
+    }
+
+    /**
+     * 片号必须是 0 到最后一片，且除最后一片外每片都是约定的 5MB，各片大小之和等于初始化时的 fileSize。
+     * 大小不符的片会从对象存储和片号列表里去掉，续传才不会把它当成已经完成。
+     */
+    private void assertChunksComplete(UploadSessionDoc session) {
+        Long fileSize = session.getFileSize();
+        if (fileSize == null || fileSize <= 0) {
+            throw new BusinessException(ResultCode.PARAM_INVALID, "上传文件大小无效");
+        }
+        int chunkSize = VideoConstants.CHUNK_SIZE;
+        int expectedCount = (int) ((fileSize + chunkSize - 1) / chunkSize);
+        List<Integer> indexes = session.getChunks() == null
+                ? List.of()
+                : session.getChunks().stream().filter(index -> index != null).distinct().sorted().toList();
+        List<Integer> mismatched = new ArrayList<>();
+        long total = 0;
+        int matched = 0;
+        for (Integer index : indexes) {
+            if (index < 0 || index >= expectedCount) {
+                mismatched.add(index);
+                continue;
+            }
+            long expected = expectedChunkSize(fileSize, chunkSize, expectedCount, index);
+            Long size = readChunkSize(session.getSessionId(), index);
+            if (size == null || size != expected) {
+                log.warn("分片大小不符: sessionId={}, chunk={}, size={}, expected={}",
+                        session.getSessionId(), index, size, expected);
+                mismatched.add(index);
+                continue;
+            }
+            total += size;
+            matched++;
+        }
+        if (!mismatched.isEmpty()) {
+            discardChunks(session.getSessionId(), mismatched);
+        }
+        if (matched != expectedCount || total != fileSize) {
+            throw new BusinessException(ResultCode.PARAM_INVALID, CHUNK_LAYOUT_MISMATCH);
+        }
+    }
+
+    private long expectedChunkSize(long fileSize, int chunkSize, int expectedCount, int index) {
+        boolean last = index == expectedCount - 1;
+        return last ? fileSize - (long) (expectedCount - 1) * chunkSize : chunkSize;
+    }
+
+    /** 读不到大小时返回 null，调用方会把这一片从已完成列表里拿掉。 */
+    private Long readChunkSize(String sessionId, int chunkIndex) {
+        try {
+            StatObjectResponse stat = minioClient.statObject(StatObjectArgs.builder()
+                    .bucket(minioConfig.getRawBucket())
+                    .object(chunkObject(sessionId, chunkIndex))
+                    .build());
+            return stat == null ? null : stat.size();
+        } catch (Exception e) {
+            log.warn("读取分片大小失败: sessionId={}, chunk={}, error={}", sessionId, chunkIndex, e.getMessage());
+            return null;
+        }
+    }
+
+    private void discardChunks(String sessionId, List<Integer> indexes) {
+        Set<Integer> unique = new HashSet<>(indexes);
+        for (Integer index : unique) {
+            try {
+                minioClient.removeObject(RemoveObjectArgs.builder()
+                        .bucket(minioConfig.getRawBucket())
+                        .object(chunkObject(sessionId, index))
+                        .build());
+            } catch (Exception e) {
+                log.warn("删除大小不符的分片失败: sessionId={}, chunk={}, error={}",
+                        sessionId, index, e.getMessage());
+            }
+        }
+        mongoTemplate.updateFirst(
+                Query.query(Criteria.where("_id").is(sessionId)),
+                new Update().pullAll("chunks", unique.toArray()),
+                UploadSessionDoc.class);
     }
 
     private byte[] readChunk(MultipartFile data) {
