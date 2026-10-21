@@ -37,14 +37,8 @@ public class CommentDocument {
     /** 直接父评论 ID；根评论自身为 null */
     private Long parentId;
 
-    /** 评论人用户 ID */
+    /** 评论人用户 ID。展示名和头像不落在文档上，列表按这个 ID 向用户服务取当前资料 */
     private Long userId;
-
-    /** 用户名快照（评论时写入，避免展示时频繁 Feign 调用） */
-    private String username;
-
-    /** 头像快照 */
-    private String avatar;
 
     /** 评论内容 */
     private String content;
@@ -67,11 +61,8 @@ public class CommentDocument {
     /** 状态 0-正常 1-作者删除 2-管理员隐藏 */
     private Integer status;
 
-    /** 回复对象用户 ID（仅回复文档使用，@xxx 展示） */
+    /** 回复对象用户 ID（仅回复文档使用）。展示名按这个 ID 现查 */
     private Long replyToUserId;
-
-    /** 回复对象用户名（仅回复文档使用） */
-    private String replyToUsername;
 
     /** 创建时间 */
     @Indexed

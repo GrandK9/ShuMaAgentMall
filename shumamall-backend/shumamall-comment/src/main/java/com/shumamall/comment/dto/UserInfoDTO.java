@@ -3,7 +3,7 @@ package com.shumamall.comment.dto;
 import lombok.Data;
 
 /**
- * 用户信息 DTO（评论服务通过 Feign 从 user 服务获取用户名/头像快照）。
+ * 用户信息 DTO。评论列表按用户 ID 取当前昵称和头像时使用。
  */
 @Data
 public class UserInfoDTO {

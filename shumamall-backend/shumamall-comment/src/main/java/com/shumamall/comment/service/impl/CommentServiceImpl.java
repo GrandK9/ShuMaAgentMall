@@ -1,6 +1,7 @@
 package com.shumamall.comment.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shumamall.comment.dto.CommentCreateDTO;
 import com.shumamall.comment.dto.CommentVO;
 import com.shumamall.comment.dto.ReplyCreateDTO;
@@ -9,8 +10,10 @@ import com.shumamall.comment.entity.CommentDocument;
 import com.shumamall.comment.feign.ProductFeignClient;
 import com.shumamall.comment.feign.UserFeignClient;
 import com.shumamall.comment.service.CommentService;
+import com.shumamall.common.cache.UserBriefCache;
 import com.shumamall.common.exception.BusinessException;
 import com.shumamall.common.result.PageResult;
+import com.shumamall.common.result.R;
 import com.shumamall.common.result.ResultCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,16 +27,22 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
  * 评论服务实现。
  * <p>
  * 数据存储：MongoDB（评论文档 product_comment），点赞/举报防重用 Redis Set。
- * 用户名/头像在发表时通过 user 服务 Feign 获取快照，展示不再联动。
+ * 文档只存用户 ID。返回列表前按本页用户 ID 批量查询当前昵称和头像。
  */
 @Slf4j
 @Service
@@ -42,6 +51,8 @@ public class CommentServiceImpl implements CommentService {
 
     /** 举报自动隐藏阈值 */
     private static final int REPORT_HIDE_THRESHOLD = 10;
+
+    private static final ObjectMapper BRIEF_JSON = new ObjectMapper();
 
     /** 状态：正常 */
     private static final int STATUS_NORMAL = 0;
@@ -85,7 +96,7 @@ public class CommentServiceImpl implements CommentService {
                         .and(Sort.by(Sort.Direction.DESC, "createdAt")))
                 .limit(max);
         List<CommentDocument> list = mongoTemplate.find(query, CommentDocument.class);
-        return list.stream().map(this::toVO).collect(Collectors.toList());
+        return toViews(list);
     }
 
     @Override
@@ -114,12 +125,12 @@ public class CommentServiceImpl implements CommentService {
         doc.setReportCount(0);
         doc.setStatus(STATUS_NORMAL);
         doc.setCreatedAt(LocalDateTime.now());
-        fillUserSnapshot(doc, userId);
+        doc.setUserId(userId);
 
         mongoTemplate.insert(doc);
         syncCommentCount(doc.getProductId(), 1);
         log.info("发表评论: commentId={}, productId={}, userId={}", doc.getId(), doc.getProductId(), userId);
-        return toVO(doc);
+        return toView(doc);
     }
 
     @Override
@@ -151,9 +162,8 @@ public class CommentServiceImpl implements CommentService {
         doc.setReportCount(0);
         doc.setStatus(STATUS_NORMAL);
         doc.setReplyToUserId(dto.getReplyToUserId());
-        doc.setReplyToUsername(dto.getReplyToUsername());
         doc.setCreatedAt(LocalDateTime.now());
-        fillUserSnapshot(doc, userId);
+        doc.setUserId(userId);
 
         mongoTemplate.insert(doc);
 
@@ -165,7 +175,7 @@ public class CommentServiceImpl implements CommentService {
 
         syncCommentCount(doc.getProductId(), 1);
         log.info("回复评论: replyId={}, rootId={}, userId={}", doc.getId(), rootId, userId);
-        return toVO(doc);
+        return toView(doc);
     }
 
     @Override
@@ -291,8 +301,7 @@ public class CommentServiceImpl implements CommentService {
         query.skip((long) (page - 1) * size).limit(size);
         List<CommentDocument> list = mongoTemplate.find(query, CommentDocument.class);
 
-        List<CommentVO> records = list.stream().map(this::toVO).collect(Collectors.toList());
-        return new PageResult<>(page, size, total, records);
+        return new PageResult<>(page, size, total, toViews(list));
     }
 
     /**
@@ -339,22 +348,131 @@ public class CommentServiceImpl implements CommentService {
     }
 
     /**
-     * 填充用户名/头像快照（Feign 调 user 服务）。
-     * <p>
-     * 用户服务不可用时 {@code UserFeignFallbackFactory} 返回 data 为 null 的降级结果，
-     * 此时落到默认展示名「用户{userId}」，发表评论主流程不被阻断。
+     * 单条评论补上当前展示名和头像。
      */
-    private void fillUserSnapshot(CommentDocument doc, Long userId) {
-        doc.setUserId(userId);
-        UserInfoDTO userInfo = userFeignClient.getUserInfo(userId).getData();
-        if (userInfo != null) {
-            doc.setUsername(StringUtils.hasText(userInfo.getNickname())
-                    ? userInfo.getNickname() : userInfo.getUsername());
-            doc.setAvatar(userInfo.getAvatar());
+    private CommentVO toView(CommentDocument doc) {
+        return toViews(List.of(doc)).get(0);
+    }
+
+    /**
+     * 这一页出现的用户 ID 先读 Redis。未命中的再向用户服务查一次并回写缓存。
+     * 用户服务不可用或查无此人时，展示名降级为「用户{id}」。
+     */
+    private List<CommentVO> toViews(List<CommentDocument> docs) {
+        List<CommentVO> views = docs.stream().map(this::toVO).collect(Collectors.toList());
+        if (views.isEmpty()) {
+            return views;
+        }
+        Set<Long> ids = new LinkedHashSet<>();
+        for (CommentVO view : views) {
+            if (view.getUserId() != null) {
+                ids.add(view.getUserId());
+            }
+            if (view.getReplyToUserId() != null) {
+                ids.add(view.getReplyToUserId());
+            }
+        }
+        Map<Long, UserInfoDTO> users = loadUsers(ids);
+        for (CommentVO view : views) {
+            applyAuthor(view, users.get(view.getUserId()));
+            if (view.getReplyToUserId() != null) {
+                UserInfoDTO target = users.get(view.getReplyToUserId());
+                view.setReplyToUsername(target == null
+                        ? "用户" + view.getReplyToUserId()
+                        : displayName(target, view.getReplyToUserId()));
+            }
+        }
+        return views;
+    }
+
+    private void applyAuthor(CommentVO view, UserInfoDTO user) {
+        if (user == null) {
+            view.setUsername(view.getUserId() == null ? "用户" : "用户" + view.getUserId());
+            view.setAvatar(null);
             return;
         }
-        doc.setUsername("用户" + userId);
-        doc.setAvatar(null);
+        view.setUsername(displayName(user, view.getUserId()));
+        view.setAvatar(user.getAvatar());
+    }
+
+    private String displayName(UserInfoDTO user, Long userId) {
+        if (StringUtils.hasText(user.getNickname())) {
+            return user.getNickname();
+        }
+        if (StringUtils.hasText(user.getUsername())) {
+            return user.getUsername();
+        }
+        return "用户" + userId;
+    }
+
+    private Map<Long, UserInfoDTO> loadUsers(Set<Long> ids) {
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> idList = new ArrayList<>(ids);
+        Map<Long, UserInfoDTO> users = new HashMap<>();
+        List<Long> missing = readCachedBriefs(idList, users);
+        if (missing.isEmpty()) {
+            return users;
+        }
+        R<List<UserInfoDTO>> resp = userFeignClient.listBrief(missing);
+        if (resp == null || !resp.isSuccess() || resp.getData() == null) {
+            return users;
+        }
+        for (UserInfoDTO user : resp.getData()) {
+            if (user == null || user.getId() == null) {
+                continue;
+            }
+            users.put(user.getId(), user);
+            writeCachedBrief(user);
+        }
+        return users;
+    }
+
+    /** 命中的放进 users，返回仍需向用户服务查询的 ID。缓存故障时全部视为未命中。 */
+    private List<Long> readCachedBriefs(List<Long> idList, Map<Long, UserInfoDTO> users) {
+        List<String> keys = idList.stream().map(UserBriefCache::key).toList();
+        List<String> cached;
+        try {
+            cached = stringRedisTemplate.opsForValue().multiGet(keys);
+        } catch (Exception e) {
+            log.warn("读取用户展示缓存失败: err={}", e.getMessage());
+            return idList;
+        }
+        List<Long> missing = new ArrayList<>();
+        for (int i = 0; i < idList.size(); i++) {
+            String json = cached == null || i >= cached.size() ? null : cached.get(i);
+            UserInfoDTO user = parseBrief(json);
+            if (user == null) {
+                missing.add(idList.get(i));
+            } else {
+                user.setId(idList.get(i));
+                users.put(idList.get(i), user);
+            }
+        }
+        return missing;
+    }
+
+    private void writeCachedBrief(UserInfoDTO user) {
+        try {
+            stringRedisTemplate.opsForValue().set(
+                    UserBriefCache.key(user.getId()),
+                    BRIEF_JSON.writeValueAsString(user),
+                    Duration.ofMinutes(UserBriefCache.TTL_MINUTES));
+        } catch (Exception e) {
+            log.warn("写入用户展示缓存失败: userId={}, err={}", user.getId(), e.getMessage());
+        }
+    }
+
+    private UserInfoDTO parseBrief(String json) {
+        if (!StringUtils.hasText(json)) {
+            return null;
+        }
+        try {
+            return BRIEF_JSON.readValue(json, UserInfoDTO.class);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
