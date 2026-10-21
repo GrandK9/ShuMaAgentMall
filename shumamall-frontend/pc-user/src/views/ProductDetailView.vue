@@ -11,6 +11,7 @@ import {
   getRootComments,
   getVideoPlayInfo,
   likeComment,
+  unlikeComment,
   replyComment,
   reportComment,
   uploadCommentVideo,
@@ -244,14 +245,15 @@ async function submitComment(): Promise<void> {
   }
 }
 
-/** 点赞（幂等），刷新点赞数 */
+/** 点赞或取消点赞，刷新点赞数 */
 async function onLike(c: Comment): Promise<void> {
   if (!requireLogin()) return;
   try {
-    const count = await likeComment(c.id);
+    const count = c.liked ? await unlikeComment(c.id) : await likeComment(c.id);
     c.likeCount = count;
+    c.liked = !c.liked;
   } catch (e) {
-    ElMessage.error(`点赞失败：${(e as Error).message}`);
+    ElMessage.error(`${c.liked ? '取消点赞' : '点赞'}失败：${(e as Error).message}`);
   }
 }
 
@@ -502,7 +504,7 @@ onMounted(() => {
           </div>
 
           <div class="comment-actions">
-            <span class="action-btn" @click="onLike(c)">赞 {{ c.likeCount ?? 0 }}</span>
+            <span class="action-btn" :class="{ liked: c.liked }" @click="onLike(c)">{{ c.liked ? '已赞' : '赞' }} {{ c.likeCount ?? 0 }}</span>
             <span class="action-btn" @click="openReplyBox(c)">回复 {{ c.replyCount ?? 0 }}</span>
             <span v-if="c.userId === currentUserId()" class="action-btn danger" @click="onDeleteComment(c)">删除</span>
             <span class="action-btn" @click="onReport(c)">举报</span>
@@ -720,6 +722,7 @@ onMounted(() => {
   cursor: pointer;
   user-select: none;
 }
+.action-btn.liked,
 .action-btn:hover {
   color: #409eff;
 }

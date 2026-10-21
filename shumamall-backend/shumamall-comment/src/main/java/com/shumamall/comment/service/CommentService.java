@@ -61,7 +61,7 @@ public interface CommentService {
     CommentVO reply(Long userId, Long rootId, ReplyCreateDTO dto);
 
     /**
-     * 点赞评论（幂等：同一用户重复点赞不累加）。
+     * 点赞评论。同一用户重复点赞不累加。
      *
      * @param userId    当前登录用户 ID
      * @param commentId 评论 ID
@@ -70,7 +70,16 @@ public interface CommentService {
     Integer like(Long userId, Long commentId);
 
     /**
-     * 举报评论（举报数达到阈值自动隐藏）。
+     * 取消点赞。没有点赞关系时计数不变。
+     *
+     * @param userId    当前登录用户 ID
+     * @param commentId 评论 ID
+     * @return 取消后的点赞数
+     */
+    Integer unlike(Long userId, Long commentId);
+
+    /**
+     * 举报评论（举报数达到阈值自动隐藏）。同一用户重复举报不累加。
      *
      * @param userId    当前登录用户 ID
      * @param commentId 评论 ID

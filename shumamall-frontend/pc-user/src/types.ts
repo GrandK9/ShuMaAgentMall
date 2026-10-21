@@ -144,6 +144,8 @@ export interface Comment {
   /** 评论附带视频 ID（字符串雪花 ID，无视频时为空） */
   videoId?: string;
   likeCount?: number;
+  /** 当前登录用户是否已赞 */
+  liked?: boolean;
   replyCount?: number;
   reportCount?: number;
   status?: number;

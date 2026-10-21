@@ -200,9 +200,14 @@ export function replyComment(
   });
 }
 
-/** 点赞评论（幂等），返回点赞后的点赞数 */
+/** 点赞评论，返回点赞后的点赞数 */
 export function likeComment(commentId: string): Promise<number> {
   return request<number>(`${COMMENT_BASE}/${commentId}/like`, { method: 'POST' });
+}
+
+/** 取消点赞，返回取消后的点赞数 */
+export function unlikeComment(commentId: string): Promise<number> {
+  return request<number>(`${COMMENT_BASE}/${commentId}/like`, { method: 'DELETE' });
 }
 
 /** 举报评论 */

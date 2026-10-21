@@ -7,9 +7,12 @@ import com.shumamall.comment.dto.CommentVO;
 import com.shumamall.comment.dto.ReplyCreateDTO;
 import com.shumamall.comment.dto.UserInfoDTO;
 import com.shumamall.comment.entity.CommentDocument;
+import com.shumamall.comment.entity.CommentLikeDocument;
+import com.shumamall.comment.entity.CommentReportDocument;
 import com.shumamall.comment.feign.ProductFeignClient;
 import com.shumamall.comment.feign.UserFeignClient;
 import com.shumamall.comment.service.CommentService;
+import com.shumamall.common.auth.SecurityContext;
 import com.shumamall.common.cache.UserBriefCache;
 import com.shumamall.common.exception.BusinessException;
 import com.shumamall.common.result.PageResult;
@@ -18,7 +21,9 @@ import com.shumamall.common.result.ResultCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -41,7 +46,8 @@ import java.util.stream.Collectors;
 /**
  * 评论服务实现。
  * <p>
- * 数据存储：MongoDB（评论文档 product_comment），点赞/举报防重用 Redis Set。
+ * 数据存储：MongoDB（评论文档 product_comment，点赞 comment_like，举报 comment_report）。
+ * 谁赞过、谁举报过以关系集合的唯一索引为准。Redis 只按用户挡短时间连点，可以过期。
  * 文档只存用户 ID。返回列表前按本页用户 ID 批量查询当前昵称和头像。
  */
 @Slf4j
@@ -51,6 +57,14 @@ public class CommentServiceImpl implements CommentService {
 
     /** 举报自动隐藏阈值 */
     private static final int REPORT_HIDE_THRESHOLD = 10;
+
+    /**
+     * 点赞/举报防连点缓存。过期后同一用户再点，仍由关系集合的唯一索引决定计数动不动。
+     * 按用户分开存，一条热门评论不会把所有点赞用户堆在一个键里。
+     */
+    private static final Duration ACTION_GUARD_TTL = Duration.ofMinutes(10);
+    private static final String LIKE_GUARD_PREFIX = "comment:like:";
+    private static final String REPORT_GUARD_PREFIX = "comment:report:";
 
     private static final ObjectMapper BRIEF_JSON = new ObjectMapper();
 
@@ -181,43 +195,79 @@ public class CommentServiceImpl implements CommentService {
     @Override
     public Integer like(Long userId, Long commentId) {
         requireLogin(userId);
-
-        CommentDocument doc = findById(commentId);
-        if (doc == null || doc.getStatus() != STATUS_NORMAL) {
-            throw new BusinessException(ResultCode.NOT_FOUND, "评论不存在");
+        CommentDocument doc = requireVisible(commentId);
+        String guardKey = LIKE_GUARD_PREFIX + commentId + ":" + userId;
+        if (guardHit(guardKey)) {
+            return likeCountOf(doc);
         }
 
-        String redisKey = "comment:like:" + commentId;
-        Boolean added = stringRedisTemplate.opsForSet().add(redisKey, userId.toString()) > 0;
-        if (!added) {
-            // 已点过赞，幂等返回当前点赞数
-            return doc.getLikeCount() == null ? 0 : doc.getLikeCount();
+        // 先插入关系。唯一索引冲突说明这个人已经赞过，计数不动。
+        CommentLikeDocument like = new CommentLikeDocument();
+        like.setId(IdWorker.getId());
+        like.setCommentId(commentId);
+        like.setUserId(userId);
+        like.setCreatedAt(LocalDateTime.now());
+        if (!insertOnce(like)) {
+            rememberGuard(guardKey);
+            log.debug("重复点赞已忽略: commentId={}, userId={}", commentId, userId);
+            return likeCountOf(doc);
         }
 
-        mongoTemplate.updateFirst(
+        CommentDocument updated = mongoTemplate.findAndModify(
                 Query.query(Criteria.where("_id").is(commentId)),
                 new Update().inc("likeCount", 1),
+                FindAndModifyOptions.options().returnNew(true),
                 CommentDocument.class);
-
-        int newCount = (doc.getLikeCount() == null ? 0 : doc.getLikeCount()) + 1;
+        rememberGuard(guardKey);
+        int newCount = updated == null ? likeCountOf(doc) + 1 : likeCountOf(updated);
         log.debug("点赞评论: commentId={}, userId={}, likeCount={}", commentId, userId, newCount);
+        return newCount;
+    }
+
+    @Override
+    public Integer unlike(Long userId, Long commentId) {
+        requireLogin(userId);
+        CommentDocument doc = requireVisible(commentId);
+        String guardKey = LIKE_GUARD_PREFIX + commentId + ":" + userId;
+
+        var removed = mongoTemplate.remove(
+                Query.query(Criteria.where("commentId").is(commentId).and("userId").is(userId)),
+                CommentLikeDocument.class);
+        clearGuard(guardKey);
+        if (removed.getDeletedCount() == 0) {
+            return likeCountOf(doc);
+        }
+
+        // 只在还有赞时减，避免计数被减成负数。
+        CommentDocument updated = mongoTemplate.findAndModify(
+                Query.query(Criteria.where("_id").is(commentId).and("likeCount").gt(0)),
+                new Update().inc("likeCount", -1),
+                FindAndModifyOptions.options().returnNew(true),
+                CommentDocument.class);
+        int newCount = updated == null ? Math.max(likeCountOf(doc) - 1, 0) : likeCountOf(updated);
+        log.debug("取消点赞: commentId={}, userId={}, likeCount={}", commentId, userId, newCount);
         return newCount;
     }
 
     @Override
     public void report(Long userId, Long commentId) {
         requireLogin(userId);
-
-        CommentDocument doc = findById(commentId);
-        if (doc == null || doc.getStatus() != STATUS_NORMAL) {
-            throw new BusinessException(ResultCode.NOT_FOUND, "评论不存在");
+        CommentDocument doc = requireVisible(commentId);
+        String guardKey = REPORT_GUARD_PREFIX + commentId + ":" + userId;
+        if (guardHit(guardKey)) {
+            hideIfThreshold(doc);
+            return;
         }
 
-        // 与点赞同一套 Redis Set 幂等：同一用户对同一评论只计一次举报。
-        // 否则单人连点即可累积到自动隐藏阈值，形成刷举报（越权隐藏他人评论）。
-        String redisKey = "comment:report:" + commentId;
-        boolean firstReport = stringRedisTemplate.opsForSet().add(redisKey, userId.toString()) > 0;
-        if (!firstReport) {
+        // 先记下是谁、什么时候举报的。插不进去就是同一个人重复举报，计数不加。
+        CommentReportDocument report = new CommentReportDocument();
+        report.setId(IdWorker.getId());
+        report.setCommentId(commentId);
+        report.setUserId(userId);
+        report.setCreatedAt(LocalDateTime.now());
+        if (!insertOnce(report)) {
+            rememberGuard(guardKey);
+            hideIfThreshold(doc);
             log.debug("重复举报已忽略: commentId={}, userId={}", commentId, userId);
             return;
         }
@@ -225,21 +275,13 @@ public class CommentServiceImpl implements CommentService {
         CommentDocument updated = mongoTemplate.findAndModify(
                 Query.query(Criteria.where("_id").is(commentId)),
                 new Update().inc("reportCount", 1),
-                org.springframework.data.mongodb.core.FindAndModifyOptions.options().returnNew(true),
+                FindAndModifyOptions.options().returnNew(true),
                 CommentDocument.class);
-
-        int reportCount = updated == null || updated.getReportCount() == null
-                ? 0 : updated.getReportCount();
+        rememberGuard(guardKey);
+        CommentDocument current = updated == null ? doc : updated;
+        int reportCount = current.getReportCount() == null ? 0 : current.getReportCount();
         log.info("举报评论: commentId={}, userId={}, reportCount={}", commentId, userId, reportCount);
-
-        // 举报数达到阈值自动隐藏
-        if (reportCount >= REPORT_HIDE_THRESHOLD) {
-            mongoTemplate.updateFirst(
-                    Query.query(Criteria.where("_id").is(commentId)),
-                    new Update().set("status", STATUS_HIDDEN),
-                    CommentDocument.class);
-            log.warn("评论举报达阈值自动隐藏: commentId={}, reportCount={}", commentId, reportCount);
-        }
+        hideIfThreshold(current);
     }
 
     @Override
@@ -309,6 +351,95 @@ public class CommentServiceImpl implements CommentService {
      */
     private CommentDocument findById(Long id) {
         return mongoTemplate.findById(id, CommentDocument.class);
+    }
+
+    /** 评论必须存在且处于正常状态，隐藏或已删除的不能再点赞、举报。 */
+    private CommentDocument requireVisible(Long commentId) {
+        CommentDocument doc = findById(commentId);
+        if (doc == null || doc.getStatus() == null || doc.getStatus() != STATUS_NORMAL) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "评论不存在");
+        }
+        return doc;
+    }
+
+    private int likeCountOf(CommentDocument doc) {
+        return doc.getLikeCount() == null ? 0 : doc.getLikeCount();
+    }
+
+    /**
+     * 插入关系文档。返回 false 表示唯一索引冲突，这次不是第一次。
+     */
+    private boolean insertOnce(Object document) {
+        try {
+            mongoTemplate.insert(document);
+            return true;
+        } catch (DuplicateKeyException e) {
+            return false;
+        }
+    }
+
+    /** 缓存命中表示短时间内已经确认过，不必再写 MongoDB。缓存故障时当作未命中。 */
+    private boolean guardHit(String key) {
+        try {
+            return stringRedisTemplate.opsForValue().get(key) != null;
+        } catch (Exception e) {
+            log.warn("读取防连点缓存失败: key={}, err={}", key, e.getMessage());
+            return false;
+        }
+    }
+
+    private void rememberGuard(String key) {
+        try {
+            stringRedisTemplate.opsForValue().set(key, "1", ACTION_GUARD_TTL);
+        } catch (Exception e) {
+            log.warn("写入防连点缓存失败: key={}, err={}", key, e.getMessage());
+        }
+    }
+
+    private void clearGuard(String key) {
+        try {
+            stringRedisTemplate.delete(key);
+        } catch (Exception e) {
+            log.warn("删除防连点缓存失败: key={}, err={}", key, e.getMessage());
+        }
+    }
+
+    /** 举报数已经到阈值时把评论隐藏。重复举报也会再检查一次，避免上次计数加上了但隐藏没写上。 */
+    private void hideIfThreshold(CommentDocument doc) {
+        int reportCount = doc.getReportCount() == null ? 0 : doc.getReportCount();
+        if (reportCount < REPORT_HIDE_THRESHOLD || doc.getStatus() == null || doc.getStatus() != STATUS_NORMAL) {
+            return;
+        }
+        mongoTemplate.updateFirst(
+                Query.query(Criteria.where("_id").is(doc.getId()).and("status").is(STATUS_NORMAL)),
+                new Update().set("status", STATUS_HIDDEN),
+                CommentDocument.class);
+        log.warn("评论举报达阈值自动隐藏: commentId={}, reportCount={}", doc.getId(), reportCount);
+    }
+
+    /** 列表只标出当前用户赞过的评论，匿名访问不查点赞关系。查失败时评论列表照常返回。 */
+    private void markLiked(List<CommentVO> views) {
+        Long userId = SecurityContext.getUserId();
+        if (userId == null || views.isEmpty()) {
+            return;
+        }
+        List<Long> ids = views.stream().map(CommentVO::getId).filter(id -> id != null).toList();
+        if (ids.isEmpty()) {
+            return;
+        }
+        try {
+            List<CommentLikeDocument> likes = mongoTemplate.find(
+                    Query.query(Criteria.where("commentId").in(ids).and("userId").is(userId)),
+                    CommentLikeDocument.class);
+            Set<Long> likedIds = likes.stream()
+                    .map(CommentLikeDocument::getCommentId)
+                    .collect(Collectors.toSet());
+            for (CommentVO view : views) {
+                view.setLiked(likedIds.contains(view.getId()));
+            }
+        } catch (Exception e) {
+            log.warn("查询当前用户点赞关系失败: userId={}, err={}", userId, e.getMessage());
+        }
     }
 
     /**
@@ -382,6 +513,7 @@ public class CommentServiceImpl implements CommentService {
                         : displayName(target, view.getReplyToUserId()));
             }
         }
+        markLiked(views);
         return views;
     }
 

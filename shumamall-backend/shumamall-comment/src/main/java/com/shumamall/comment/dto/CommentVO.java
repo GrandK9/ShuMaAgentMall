@@ -53,6 +53,9 @@ public class CommentVO {
     /** 点赞数 */
     private Integer likeCount;
 
+    /** 当前登录用户是否已赞。未登录时为空 */
+    private Boolean liked;
+
     /** 回复数 */
     private Integer replyCount;
 

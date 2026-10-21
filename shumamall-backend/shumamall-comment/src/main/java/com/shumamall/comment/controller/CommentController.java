@@ -120,15 +120,27 @@ public class CommentController {
     }
 
     /**
-     * 点赞评论（幂等）。
+     * 点赞评论。同一用户重复点赞不累加。
      *
      * @param commentId 评论 ID
      * @return 点赞后的点赞数
      */
-    @Operation(summary = "点赞评论（幂等）")
+    @Operation(summary = "点赞评论")
     @PostMapping("/{commentId}/like")
     public R<Integer> like(@Parameter(description = "评论 ID") @PathVariable Long commentId) {
         return R.ok(commentService.like(SecurityContext.getUserId(), commentId));
+    }
+
+    /**
+     * 取消点赞。
+     *
+     * @param commentId 评论 ID
+     * @return 取消后的点赞数
+     */
+    @Operation(summary = "取消点赞")
+    @DeleteMapping("/{commentId}/like")
+    public R<Integer> unlike(@Parameter(description = "评论 ID") @PathVariable Long commentId) {
+        return R.ok(commentService.unlike(SecurityContext.getUserId(), commentId));
     }
 
     /**
