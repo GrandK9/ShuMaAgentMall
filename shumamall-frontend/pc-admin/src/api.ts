@@ -435,11 +435,18 @@ export function initVideoUpload(file: File): Promise<VideoInitResp> {
 
 /**
  * 上传单个分片。不要手动设置 Content-Type，交给浏览器生成 multipart boundary。
+ * md5 是这一片的摘要，服务端与写入 MinIO 后的 ETag 比对。
  */
-export function uploadVideoChunk(sessionId: string, chunkIndex: number, data: Blob): Promise<void> {
+export function uploadVideoChunk(
+  sessionId: string,
+  chunkIndex: number,
+  data: Blob,
+  md5: string,
+): Promise<void> {
   const form = new FormData();
   form.append('sessionId', sessionId);
   form.append('chunkIndex', String(chunkIndex));
+  form.append('md5', md5);
   form.append('data', data, `chunk_${chunkIndex}`);
   return request<void>(`${VIDEO_BASE}/chunk`, { method: 'POST', body: form });
 }

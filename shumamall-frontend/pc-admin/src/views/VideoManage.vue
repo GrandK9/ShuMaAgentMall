@@ -12,6 +12,7 @@ import {
   retranscodeVideo,
   uploadVideoChunk,
 } from '../api';
+import { md5Hex } from '../md5';
 import type { VideoMeta, VideoPlayInfo } from '../types';
 import HlsPlayer from '../components/HlsPlayer.vue';
 
@@ -27,6 +28,10 @@ const SESSION_STORAGE_KEY = 'admin_video_upload_session';
 /** 后台处理轮询：最多等 60 次 × 2s */
 const POLL_MAX_ROUNDS = 60;
 const POLL_INTERVAL_MS = 2000;
+
+/** 同一片摘要对不上时最多再传这么多次，仍然失败则保留会话，用户重选同一文件可续传 */
+const CHUNK_VERIFY_ATTEMPTS = 3;
+const CHUNK_CHECKSUM_MISMATCH = '分片校验未通过';
 
 const loading = ref(false);
 const videos = ref<VideoMeta[]>([]);
@@ -208,7 +213,25 @@ async function uploadByChunks(file: File): Promise<string> {
       continue;
     }
     const blob = file.slice(index * chunkSize, Math.min(file.size, (index + 1) * chunkSize));
-    await uploadVideoChunk(sessionId, index, blob);
+    const md5 = await md5Hex(blob);
+    let uploadedThis = false;
+    let lastError: Error | undefined;
+    for (let attempt = 1; attempt <= CHUNK_VERIFY_ATTEMPTS; attempt += 1) {
+      try {
+        await uploadVideoChunk(sessionId, index, blob, md5);
+        uploadedThis = true;
+        break;
+      } catch (e) {
+        lastError = e as Error;
+        if (!lastError.message.includes(CHUNK_CHECKSUM_MISMATCH) || attempt === CHUNK_VERIFY_ATTEMPTS) {
+          throw lastError;
+        }
+        uploadStage.value = `分片 ${index + 1} 校验未通过，正在重传（${attempt}/${CHUNK_VERIFY_ATTEMPTS}）`;
+      }
+    }
+    if (!uploadedThis) {
+      throw lastError ?? new Error(CHUNK_CHECKSUM_MISMATCH);
+    }
     done += 1;
     uploadStage.value = `上传分片 ${done}/${chunkCount}`;
     uploadPercent.value = Math.round((done / chunkCount) * 100);
@@ -270,8 +293,16 @@ async function onFilePicked(event: Event): Promise<void> {
     }
     await load(1);
   } catch (e) {
-    localStorage.removeItem(SESSION_STORAGE_KEY);
-    ElMessage.error(`上传失败：${(e as Error).message}`);
+    const message = (e as Error).message;
+    // 校验失败时留下 sessionId。已完成的片还在会话里，用户重选同一个文件可以接着传。
+    if (!message.includes(CHUNK_CHECKSUM_MISMATCH)) {
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+    }
+    ElMessage.error(
+      message.includes(CHUNK_CHECKSUM_MISMATCH)
+        ? '分片校验未通过。请重新选择该文件，已传完的分片会继续使用'
+        : `上传失败：${message}`,
+    );
   } finally {
     uploading.value = false;
     uploadStage.value = '';

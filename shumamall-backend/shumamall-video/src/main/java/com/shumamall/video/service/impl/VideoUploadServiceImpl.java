@@ -16,6 +16,7 @@ import com.shumamall.video.service.VideoUploadService;
 import io.minio.ComposeObjectArgs;
 import io.minio.ComposeSource;
 import io.minio.MinioClient;
+import io.minio.ObjectWriteResponse;
 import io.minio.PutObjectArgs;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,9 +29,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -45,6 +50,9 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class VideoUploadServiceImpl implements VideoUploadService {
+
+    /** 前端据此判断这一片要重传，而不是整次上传作废。 */
+    static final String CHUNK_CHECKSUM_MISMATCH = "分片校验未通过";
 
     private final MongoTemplate mongoTemplate;
     private final MinioClient minioClient;
@@ -80,7 +88,7 @@ public class VideoUploadServiceImpl implements VideoUploadService {
     }
 
     @Override
-    public void uploadChunk(String sessionId, Integer chunkIndex, MultipartFile data) {
+    public void uploadChunk(String sessionId, Integer chunkIndex, MultipartFile data, String md5) {
         UploadSessionDoc session = requireSession(sessionId);
         if (!VideoConstants.SESSION_UPLOADING.equals(session.getStatus())) {
             throw new BusinessException(ResultCode.PARAM_INVALID, "会话已处理完成，无法继续上传");
@@ -89,16 +97,32 @@ public class VideoUploadServiceImpl implements VideoUploadService {
             log.debug("分片已存在，跳过重复上传: sessionId={}, chunk={}", sessionId, chunkIndex);
             return;
         }
+        String expected = normalizeMd5(md5);
+        byte[] body = readChunk(data);
+        String actual = md5Hex(body);
+        // 先对上浏览器传来的摘要，再写入。对不上说明这一片在传到服务端时已经变了，不能记索引。
+        if (!actual.equals(expected)) {
+            log.warn("分片与浏览器摘要不一致: sessionId={}, chunk={}", sessionId, chunkIndex);
+            throw new BusinessException(ResultCode.PARAM_INVALID, CHUNK_CHECKSUM_MISMATCH);
+        }
+        String etag;
         try {
-            minioClient.putObject(PutObjectArgs.builder()
+            // 不额外指定 partSize。一片不超过 5MB，SDK 按单次写入，ETag 就是内容的 MD5。
+            ObjectWriteResponse written = minioClient.putObject(PutObjectArgs.builder()
                     .bucket(minioConfig.getRawBucket())
                     .object(chunkObject(sessionId, chunkIndex))
-                    .stream(data.getInputStream(), data.getSize(), -1)
+                    .stream(new ByteArrayInputStream(body), body.length, -1)
                     .contentType(data.getContentType())
                     .build());
+            etag = written.etag() == null ? "" : written.etag().replace("\"", "").toLowerCase(Locale.ROOT);
         } catch (Exception e) {
             log.error("分片上传 MinIO 失败: sessionId={}, chunk={}", sessionId, chunkIndex, e);
             throw new BusinessException(ResultCode.SERVER_ERROR, "分片上传失败");
+        }
+        // 对象已经落下，但 ETag 和收到的字节不一致时不记索引。同一路径重传会盖掉这一片。
+        if (!actual.equals(etag)) {
+            log.warn("分片写入后摘要不一致: sessionId={}, chunk={}, etag={}", sessionId, chunkIndex, etag);
+            throw new BusinessException(ResultCode.PARAM_INVALID, CHUNK_CHECKSUM_MISMATCH);
         }
         session.getChunks().add(chunkIndex);
         mongoTemplate.save(session);
@@ -198,6 +222,42 @@ public class VideoUploadServiceImpl implements VideoUploadService {
             throw new BusinessException(ResultCode.NOT_FOUND, "上传会话不存在或已过期");
         }
         return session;
+    }
+
+    private byte[] readChunk(MultipartFile data) {
+        if (data == null || data.isEmpty()) {
+            throw new BusinessException(ResultCode.PARAM_INVALID, "分片内容为空");
+        }
+        byte[] body;
+        try {
+            body = data.getBytes();
+        } catch (Exception e) {
+            throw new BusinessException(ResultCode.PARAM_INVALID, "分片内容读取失败");
+        }
+        if (body.length > VideoConstants.CHUNK_SIZE) {
+            throw new BusinessException(ResultCode.FILE_TOO_LARGE, "分片超过 5MB");
+        }
+        return body;
+    }
+
+    private String normalizeMd5(String md5) {
+        if (!StringUtils.hasText(md5)) {
+            throw new BusinessException(ResultCode.PARAM_INVALID, "分片摘要不能为空");
+        }
+        String hex = md5.trim().toLowerCase(Locale.ROOT);
+        if (!hex.matches("[0-9a-f]{32}")) {
+            throw new BusinessException(ResultCode.PARAM_INVALID, "分片摘要格式不正确");
+        }
+        return hex;
+    }
+
+    private String md5Hex(byte[] body) {
+        try {
+            byte[] digest = MessageDigest.getInstance("MD5").digest(body);
+            return HexFormat.of().formatHex(digest);
+        } catch (Exception e) {
+            throw new BusinessException(ResultCode.SERVER_ERROR, "分片摘要计算失败");
+        }
     }
 
     /**

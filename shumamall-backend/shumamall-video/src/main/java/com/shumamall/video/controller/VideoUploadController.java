@@ -64,14 +64,16 @@ public class VideoUploadController {
      * @param sessionId  会话 ID
      * @param chunkIndex 分片索引
      * @param data       分片内容
+     * @param md5        浏览器对这一片算出的 MD5
      * @return 操作结果
      */
     @PostMapping("/chunk")
     public R<Void> uploadChunk(@RequestParam String sessionId,
                                @RequestParam Integer chunkIndex,
-                               @RequestParam("data") MultipartFile data) {
+                               @RequestParam("data") MultipartFile data,
+                               @RequestParam String md5) {
         requireLogin();
-        videoUploadService.uploadChunk(sessionId, chunkIndex, data);
+        videoUploadService.uploadChunk(sessionId, chunkIndex, data, md5);
         return R.ok();
     }
 

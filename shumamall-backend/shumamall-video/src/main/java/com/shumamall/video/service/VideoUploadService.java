@@ -33,8 +33,9 @@ public interface VideoUploadService {
      * @param sessionId  会话 ID
      * @param chunkIndex 分片索引
      * @param data       分片内容
+     * @param md5        浏览器对这一片算出的 MD5（小写十六进制）
      */
-    void uploadChunk(String sessionId, Integer chunkIndex, MultipartFile data);
+    void uploadChunk(String sessionId, Integer chunkIndex, MultipartFile data, String md5);
 
     /**
      * 合并分片（MinIO composeObject）并触发后台校验 + HLS 切片。
