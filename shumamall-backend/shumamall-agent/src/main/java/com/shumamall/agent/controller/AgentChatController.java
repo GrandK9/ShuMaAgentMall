@@ -6,6 +6,8 @@ import com.shumamall.agent.dto.AgentStreamResponse;
 import com.shumamall.agent.dto.ChatRequest;
 import com.shumamall.agent.dto.ChatResponse;
 import com.shumamall.agent.dto.ChatSessionSummary;
+import com.shumamall.agent.dto.ToolResult;
+import com.shumamall.agent.memory.ChatHistoryText;
 import com.shumamall.agent.memory.ConversationService;
 import com.shumamall.agent.service.AgentOrchestrator;
 import com.shumamall.agent.skill.AgentSkill;
@@ -33,6 +35,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Agent 对话入口。
@@ -85,7 +88,8 @@ public class AgentChatController {
      * 与 {@link #chat} 相同的编排链路，但回复以 token 流逐块推送：
      * <ol>
      *   <li><b>init 事件</b>：请求受理后立即推送 sessionId，前端展示"思考中"</li>
-     *   <li><b>meta 事件</b>：一次推送 sessionId / skillId / plan / toolResults（工具调用过程先于文本可见）</li>
+     *   <li><b>meta 事件</b>：推送 sessionId / skillId / plan / toolResults（Plan 路径工具结果一次下发）</li>
+     *   <li><b>tool 事件</b>：导购 native 流式路径下，每完成一次工具调用推送一条 {@link ToolResult}</li>
      *   <li><b>token 事件</b>：LLM 回复逐 token 推送，前端打字机效果</li>
      * </ol>
      * 所有事件的 {@code data} 都是 JSON 文本（token 为 JSON 字符串，见 {@link #safeSend}），
@@ -154,16 +158,59 @@ public class AgentChatController {
                     return;
                 }
 
-                // 3. token 事件：订阅 LLM 回复流，逐块推送；客户端断开时取消订阅
-                Disposable subscription = streamResp.getContent().subscribe(
-                        token -> safeSend(emitter, token),
-                        err -> {
-                            log.error("流式对话异常: err={}", err.getMessage());
-                            emitter.completeWithError(err);
-                        },
-                        emitter::complete
-                );
-                emitter.onCompletion(subscription::dispose);
+                // 3. 导购 native：tool 与 token 并行订阅；Plan 路径仅 token 流
+                if (Boolean.TRUE.equals(streamResp.getIncrementalToolStream())
+                        && streamResp.getToolEventFlux() != null) {
+                    AtomicBoolean toolsDone = new AtomicBoolean(false);
+                    AtomicBoolean contentDone = new AtomicBoolean(false);
+                    Runnable tryFinish = () -> {
+                        if (toolsDone.get() && contentDone.get()) {
+                            emitter.complete();
+                        }
+                    };
+                    Disposable toolSub = streamResp.getToolEventFlux().subscribe(
+                            tr -> {
+                                try {
+                                    safeSendNamedEvent(emitter, "tool", objectMapper.writeValueAsString(tr));
+                                } catch (JsonProcessingException e) {
+                                    log.warn("序列化 tool 事件失败: {}", e.getMessage());
+                                }
+                            },
+                            err -> {
+                                log.error("导购工具事件流异常: err={}", err.getMessage());
+                                emitter.completeWithError(err);
+                            },
+                            () -> {
+                                toolsDone.set(true);
+                                tryFinish.run();
+                            }
+                    );
+                    Disposable tokenSub = streamResp.getContent().subscribe(
+                            token -> safeSend(emitter, token),
+                            err -> {
+                                log.error("流式对话异常: err={}", err.getMessage());
+                                emitter.completeWithError(err);
+                            },
+                            () -> {
+                                contentDone.set(true);
+                                tryFinish.run();
+                            }
+                    );
+                    emitter.onCompletion(() -> {
+                        toolSub.dispose();
+                        tokenSub.dispose();
+                    });
+                } else {
+                    Disposable subscription = streamResp.getContent().subscribe(
+                            token -> safeSend(emitter, token),
+                            err -> {
+                                log.error("流式对话异常: err={}", err.getMessage());
+                                emitter.completeWithError(err);
+                            },
+                            emitter::complete
+                    );
+                    emitter.onCompletion(subscription::dispose);
+                }
             } catch (Exception e) {
                 log.error("流式对话启动失败: err={}", e.getMessage());
                 safeSendNamedEvent(emitter, "error", "流式处理失败: " + e.getMessage());
@@ -259,7 +306,7 @@ public class AgentChatController {
         List<Map<String, Object>> items = messages.stream()
                 .<Map<String, Object>>map(m -> Map.of(
                         "role", m.getMessageType().name().toLowerCase(),
-                        "content", m.getText()))
+                        "content", ChatHistoryText.forDisplay(m)))
                 .toList();
         return R.ok(items);
     }

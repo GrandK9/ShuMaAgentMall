@@ -45,8 +45,8 @@ shumamall:
       # 会话 TTL（分钟），到期自动清理
       ttl-minutes: 30
     planning:
-      # 单次对话最大规划步骤数，防止模型生成过长计划
-      max-steps: 5
+      # 单次规划最多几步（加购多件 + 查地址/购物车等，演示场景宜放宽；过大则拖慢且易幻觉）
+      max-steps: 15
     search:
       # 向量模型（embedding）：与 chat 模型分离配置，因为 DeepSeek 只提供 chat，
       # 没有 /v1/embeddings 端点（实测 POST https://api.deepseek.com/embeddings 返回 404，

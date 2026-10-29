@@ -8,8 +8,8 @@ package com.shumamall.agent.skill;
  *   <li>技能标识与描述（供 LLM 做技能路由）</li>
  *   <li>系统提示词（约束模型在该技能下的角色、可用工具与行为边界）</li>
  * </ul>
- * 规划模块在技能约束的边界内生成工具调用计划，形成
- * <b>技能层 → 规划模块 → 工具调用模块</b> 的纵向分层。
+ * 交易、个人中心走「规划 → 确认 → 执行」；导购走模型原生 function calling，
+ * 见 {@link #usesNativeToolCalling()}。
  */
 public interface AgentSkill {
 
@@ -32,4 +32,14 @@ public interface AgentSkill {
      * 构建该系统提示词，注入 ChatClient 的 system 消息。
      */
     String buildSystemPrompt();
+
+    /**
+     * 是否由模型在对话中直接发起工具调用（Chat API tools），而不是先产出 JSON 计划再由服务端执行。
+     * <p>
+     * 仅用于步骤事先不确定的只读场景（导购检索）。写操作技能保持默认 false，
+     * 以便整份计划在执行前经过高风险确认。
+     */
+    default boolean usesNativeToolCalling() {
+        return false;
+    }
 }

@@ -19,6 +19,7 @@ import type {
   ProductPageQuery,
   ProductSearchItem,
   ProductSearchQuery,
+  ToolResult,
   UserInfo,
   VideoPlayInfo,
   VideoProgress,
@@ -372,6 +373,8 @@ export interface ChatOptions {
   confirmTokens?: string[];
   /** 是否开启 ReAct 多轮工具调用 */
   reactEnabled?: boolean;
+  /** 显式指定技能（shopping_guide / trade / personal），空则服务端自动路由 */
+  skillId?: string;
   /**
    * 中止流式请求的信号。
    * <p>
@@ -400,14 +403,17 @@ export function chat(
       sessionId,
       confirmTokens: options.confirmTokens ?? [],
       reactEnabled: options.reactEnabled ?? false,
+      skillId: options.skillId,
     }),
   });
 }
 
 /** 流式对话回调 */
 export interface ChatStreamHandlers {
-  /** meta 事件：sessionId / skillId / plan / toolResults（工具调用过程） */
+  /** meta 事件：sessionId / skillId / plan / toolResults（Plan 路径一次下发） */
   onMeta: (meta: ChatMeta) => void;
+  /** tool 事件：导购 native 流式路径下，每完成一次工具调用追加一条结果 */
+  onTool?: (tool: ToolResult) => void;
   /** token 事件：LLM 回复逐块追加 */
   onToken: (token: string) => void;
   /** confirm 事件：高风险操作需要用户二次确认（Human-in-the-Loop） */
@@ -443,6 +449,7 @@ export async function chatStream(
       sessionId,
       confirmTokens: options.confirmTokens ?? [],
       reactEnabled: options.reactEnabled ?? false,
+      skillId: options.skillId,
     }),
   });
   if (!res.ok) {
@@ -468,6 +475,8 @@ export async function chatStream(
       for (const ev of events) {
         if (ev.event === 'meta') {
           handlers.onMeta(JSON.parse(ev.data) as ChatMeta);
+        } else if (ev.event === 'tool') {
+          handlers.onTool?.(JSON.parse(ev.data) as ToolResult);
         } else if (ev.event === 'confirm') {
           handlers.onConfirm?.(JSON.parse(ev.data) as ConfirmEvent);
         } else if (ev.event === 'token') {

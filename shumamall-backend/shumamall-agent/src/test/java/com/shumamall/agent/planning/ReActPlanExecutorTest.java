@@ -68,10 +68,10 @@ class ReActPlanExecutorTest {
         when(planExecutor.execute(initial, 1L))
                 .thenReturn(List.of(result("searchProduct", "SUCCESS", "[{\"id\":1}]")));
 
-        List<ToolResult> results = executor.execute(initial, "手机", skill, 1L);
+        List<ToolResult> results = executor.execute(initial, "手机", skill, 1L, "");
 
         assertThat(results).hasSize(1);
-        verify(plannerService, times(0)).plan(any(), any());
+        verify(plannerService, times(0)).plan(any(), any(), any());
     }
 
     @Test
@@ -79,14 +79,14 @@ class ReActPlanExecutorTest {
         AgentPlan initial = plan("hybridSearchProduct");
         AgentPlan retry = plan("searchProduct");
         when(planExecutor.execute(initial, 1L)).thenReturn(List.of());
-        when(plannerService.plan(any(String.class), eq(skill))).thenReturn(retry);
+        when(plannerService.plan(any(String.class), eq(skill), any())).thenReturn(retry);
         when(planExecutor.execute(retry, 1L))
                 .thenReturn(List.of(result("searchProduct", "SUCCESS", "[{\"id\":1}]")));
 
-        List<ToolResult> results = executor.execute(initial, "手机", skill, 1L);
+        List<ToolResult> results = executor.execute(initial, "手机", skill, 1L, "");
 
         assertThat(results).hasSize(1);
-        verify(plannerService, times(1)).plan(any(String.class), eq(skill));
+        verify(plannerService, times(1)).plan(any(String.class), eq(skill), any());
         verify(planExecutor, times(1)).execute(retry, 1L);
     }
 
@@ -96,14 +96,14 @@ class ReActPlanExecutorTest {
         AgentPlan retry = plan("searchProduct");
         when(planExecutor.execute(initial, 1L))
                 .thenReturn(List.of(result("hybridSearchProduct", "SUCCESS", "{\"empty\":true}")));
-        when(plannerService.plan(any(String.class), eq(skill))).thenReturn(retry);
+        when(plannerService.plan(any(String.class), eq(skill), any())).thenReturn(retry);
         when(planExecutor.execute(retry, 1L))
                 .thenReturn(List.of(result("searchProduct", "SUCCESS", "[{\"id\":1}]")));
 
-        List<ToolResult> results = executor.execute(initial, "手机", skill, 1L);
+        List<ToolResult> results = executor.execute(initial, "手机", skill, 1L, "");
 
         assertThat(results).hasSize(2);
-        verify(plannerService, times(1)).plan(any(String.class), eq(skill));
+        verify(plannerService, times(1)).plan(any(String.class), eq(skill), any());
     }
 
     @Test
@@ -111,13 +111,13 @@ class ReActPlanExecutorTest {
         AgentPlan initial = plan("hybridSearchProduct");
         AgentPlan retry = plan("searchProduct");
         when(planExecutor.execute(initial, 1L)).thenReturn(List.of());
-        when(plannerService.plan(any(String.class), eq(skill))).thenReturn(retry);
+        when(plannerService.plan(any(String.class), eq(skill), any())).thenReturn(retry);
         when(planExecutor.execute(retry, 1L)).thenReturn(List.of());
 
-        List<ToolResult> results = executor.execute(initial, "手机", skill, 1L);
+        List<ToolResult> results = executor.execute(initial, "手机", skill, 1L, "");
 
         assertThat(results).isEmpty();
-        verify(plannerService, times(1)).plan(any(String.class), eq(skill));
+        verify(plannerService, times(1)).plan(any(String.class), eq(skill), any());
         // initial + retry 共执行 2 次
         verify(planExecutor, times(1)).execute(initial, 1L);
         verify(planExecutor, times(1)).execute(retry, 1L);

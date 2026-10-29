@@ -29,6 +29,11 @@ import java.util.Map;
 @Component
 public class OrderTool extends BaseTool {
 
+    private static final int DEFAULT_PAGE_SIZE = 10;
+    private static final int MAX_PAGE_SIZE = 20;
+    /** 按订单号扫描时的页数上限（20×20=400 笔） */
+    private static final int MAX_SCAN_PAGES = 20;
+
     private final OrderFeignClient orderFeignClient;
     private final ProductResolver productResolver;
     private final UserFeignClient userFeignClient;
@@ -126,19 +131,74 @@ public class OrderTool extends BaseTool {
     }
 
     /**
-     * 查询当前用户订单列表。
+     * 分页查询当前用户订单列表。
      */
-    @Tool(description = "查询当前用户的订单列表（最近5条）")
-    public String listOrders(ToolContext toolContext) {
+    @Tool(description = "分页查询当前用户订单列表。返回 JSON 含 page/size/total/records；"
+            + "未找全时可增大 page 继续查，直到 records 为空或 page×size≥total。")
+    public String listOrders(@ToolParam(description = "页码，从 1 开始，默认 1") Integer page,
+                             @ToolParam(description = "每页条数，默认 10，最大 20") Integer size,
+                             ToolContext toolContext) {
         Long userId = userId(toolContext);
         try {
-            R<PageResult<OrderInfoDTO>> resp = orderFeignClient.orderList(1, 5);
-            if (!resp.isSuccess() || resp.getData() == null || resp.getData().getRecords() == null) {
+            int effectivePage = page == null || page < 1 ? 1 : page;
+            int effectiveSize = size == null || size < 1 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
+            R<PageResult<OrderInfoDTO>> resp = orderFeignClient.orderList(effectivePage, effectiveSize);
+            if (!resp.isSuccess() || resp.getData() == null) {
                 return "{\"empty\":true}";
             }
-            return objectMapper.writeValueAsString(resp.getData().getRecords());
+            PageResult<OrderInfoDTO> data = resp.getData();
+            if (data.getRecords() == null || data.getRecords().isEmpty()) {
+                return "{\"empty\":true,\"page\":" + effectivePage + ",\"size\":" + effectiveSize + "}";
+            }
+            Map<String, Object> body = new HashMap<>();
+            body.put("page", data.getPage());
+            body.put("size", data.getSize());
+            body.put("total", data.getTotal());
+            body.put("records", data.getRecords());
+            log.info("查询订单列表: userId={}, page={}, size={}, total={}",
+                    userId, data.getPage(), data.getSize(), data.getTotal());
+            return objectMapper.writeValueAsString(body);
         } catch (Exception e) {
             log.error("查询订单列表失败: userId={}", userId, e);
+            return error(e);
+        }
+    }
+
+    /**
+     * 按订单号查询：在用户订单中自动翻页直到命中或扫完。
+     */
+    @Tool(description = "按订单号（ORD 开头）查询单笔订单详情；内部自动分页扫描，无需手动逐页 listOrders")
+    public String getOrderByOrderNo(@ToolParam(description = "订单号，如 ORD202607261545220626") String orderNo,
+                                    ToolContext toolContext) {
+        Long userId = userId(toolContext);
+        if (orderNo == null || orderNo.isBlank()) {
+            return error("请提供订单号");
+        }
+        String target = orderNo.trim();
+        try {
+            for (int page = 1; page <= MAX_SCAN_PAGES; page++) {
+                R<PageResult<OrderInfoDTO>> resp = orderFeignClient.orderList(page, MAX_PAGE_SIZE);
+                if (!resp.isSuccess() || resp.getData() == null || resp.getData().getRecords() == null) {
+                    break;
+                }
+                List<OrderInfoDTO> records = resp.getData().getRecords();
+                if (records.isEmpty()) {
+                    break;
+                }
+                for (OrderInfoDTO order : records) {
+                    if (target.equals(order.getOrderNo())) {
+                        log.info("按订单号命中: userId={}, orderNo={}, id={}", userId, target, order.getId());
+                        return objectMapper.writeValueAsString(order);
+                    }
+                }
+                long total = resp.getData().getTotal();
+                if ((long) page * MAX_PAGE_SIZE >= total) {
+                    break;
+                }
+            }
+            return "{\"empty\":true,\"message\":\"当前账号下未找到该订单号\"}";
+        } catch (Exception e) {
+            log.error("按订单号查询失败: userId={}, orderNo={}", userId, orderNo, e);
             return error(e);
         }
     }

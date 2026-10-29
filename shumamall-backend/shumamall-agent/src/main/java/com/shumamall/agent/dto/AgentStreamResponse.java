@@ -28,8 +28,16 @@ public class AgentStreamResponse {
     /** 规划结果（Plan-then-Execute），未开启规划时为 null */
     private AgentPlan plan;
 
-    /** 工具执行结果列表 */
+    /** 工具执行结果列表（Plan 路径在 meta 中一次下发；导购 native 流式时为空，改走 {@link #toolEventFlux}） */
     private List<ToolResult> toolResults;
+
+    /**
+     * 导购 native 流式：为 true 时 meta 仅带 sessionId/skillId，每完成一次工具调用推送 {@code tool} SSE 事件。
+     */
+    private Boolean incrementalToolStream;
+
+    /** 与 {@link #incrementalToolStream} 配合，在正文 token 流订阅期间推送工具结果 */
+    private Flux<ToolResult> toolEventFlux;
 
     /**
      * Human-in-the-Loop 拦截结果。

@@ -33,7 +33,9 @@ public class TradeSkill implements AgentSkill {
                 - 查看购物车（工具：getCart）
                 - 添加商品到购物车（工具：addToCart，参数 productId、skuId、quantity）
                 - 创建订单（工具：createOrder，参数 productId、skuId、quantity、addressId）
-                - 查询订单详情 / 订单列表（工具：getOrderDetail / listOrders）
+                - 分页查订单列表（工具：listOrders，可传 page/size）
+                - 按订单号查单笔（工具：getOrderByOrderNo）
+                - 按数字订单 ID 查详情（工具：getOrderDetail）
                 - 取消订单（工具：cancelOrder，参数 orderId）
                 
                 规则：

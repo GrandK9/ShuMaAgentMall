@@ -13,6 +13,7 @@ import com.shumamall.agent.planning.PlanStep;
 import com.shumamall.agent.planning.ReActPlanExecutor;
 import com.shumamall.agent.skill.AgentSkill;
 import com.shumamall.agent.skill.SkillSelector;
+import com.shumamall.agent.dto.ToolResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
@@ -45,6 +46,8 @@ class AgentOrchestratorStreamGuardTest {
     private final PlanExecutor planExecutor = mock(PlanExecutor.class);
     private final ReActPlanExecutor reActPlanExecutor = mock(ReActPlanExecutor.class);
     private final HighRiskActionGuard highRiskActionGuard = mock(HighRiskActionGuard.class);
+    /** 分片流式用真实实现；仅 mock {@link ShoppingGuideChat#complete} */
+    private final ShoppingGuideChat shoppingGuideChat = new ShoppingGuideChat(null);
     private final ChatClient chatClient = mock(ChatClient.class);
     private final ChatMemory chatMemory = mock(ChatMemory.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -54,7 +57,7 @@ class AgentOrchestratorStreamGuardTest {
 
     private final AgentOrchestrator orchestrator = new AgentOrchestrator(
             conversationService, skillSelector, plannerService, planExecutor, reActPlanExecutor,
-            highRiskActionGuard, chatClient, chatMemory, objectMapper);
+            highRiskActionGuard, shoppingGuideChat, chatClient, chatMemory, objectMapper, false);
 
     @BeforeEach
     void setUp() {
@@ -63,6 +66,8 @@ class AgentOrchestratorStreamGuardTest {
         skillClient = mock(ChatClient.class);
         when(builder.build()).thenReturn(skillClient);
         when(chatClient.mutate()).thenReturn(builder);
+        when(conversationService.buildPlanningContext(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyInt())).thenReturn("");
     }
 
     @Test
@@ -74,9 +79,11 @@ class AgentOrchestratorStreamGuardTest {
         request.setPlanEnabled(true);
         request.setConfirmTokens(Set.of());
 
-        AgentSkill skill = mockSkill("shopping_guide");
+        AgentSkill skill = mockSkill("trade");
         when(conversationService.getOrCreateSession("sess-001", 1L)).thenReturn("sess-001");
-        when(skillSelector.select("帮我直接下单 iPhone 16", null)).thenReturn(skill);
+        when(skillSelector.select(org.mockito.ArgumentMatchers.eq("帮我直接下单 iPhone 16"),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.anyString())).thenReturn(skill);
 
         PlanStep step = new PlanStep();
         step.setStepId("step-1");
@@ -86,7 +93,9 @@ class AgentOrchestratorStreamGuardTest {
         AgentPlan plan = new AgentPlan();
         plan.setGoal("完成 iPhone 16 下单");
         plan.setSteps(List.of(step));
-        when(plannerService.plan("帮我直接下单 iPhone 16", skill)).thenReturn(plan);
+        when(plannerService.plan(org.mockito.ArgumentMatchers.eq("帮我直接下单 iPhone 16"),
+                org.mockito.ArgumentMatchers.eq(skill),
+                org.mockito.ArgumentMatchers.any())).thenReturn(plan);
 
         GuardResult blocked = GuardResult.block(List.of(step),
                 "检测到下单操作，请确认是否继续？");
@@ -97,7 +106,7 @@ class AgentOrchestratorStreamGuardTest {
 
         // then
         assertThat(response.getSessionId()).isEqualTo("sess-001");
-        assertThat(response.getSkillId()).isEqualTo("shopping_guide");
+        assertThat(response.getSkillId()).isEqualTo("trade");
         assertThat(response.getPlan()).isEqualTo(plan);
         assertThat(response.getPendingConfirmation())
                 .isNotNull()
@@ -119,9 +128,11 @@ class AgentOrchestratorStreamGuardTest {
         request.setPlanEnabled(true);
         request.setConfirmTokens(Set.of("tok-step-1"));
 
-        AgentSkill skill = mockSkill("shopping_guide");
+        AgentSkill skill = mockSkill("trade");
         when(conversationService.getOrCreateSession("sess-002", 1L)).thenReturn("sess-002");
-        when(skillSelector.select("帮我直接下单 iPhone 16", null)).thenReturn(skill);
+        when(skillSelector.select(org.mockito.ArgumentMatchers.eq("帮我直接下单 iPhone 16"),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.anyString())).thenReturn(skill);
 
         PlanStep step1 = new PlanStep();
         step1.setStepId("step-1");
@@ -136,7 +147,9 @@ class AgentOrchestratorStreamGuardTest {
         AgentPlan plan = new AgentPlan();
         plan.setGoal("完成 iPhone 16 下单并支付");
         plan.setSteps(List.of(step1, step2));
-        when(plannerService.plan("帮我直接下单 iPhone 16", skill)).thenReturn(plan);
+        when(plannerService.plan(org.mockito.ArgumentMatchers.eq("帮我直接下单 iPhone 16"),
+                org.mockito.ArgumentMatchers.eq(skill),
+                org.mockito.ArgumentMatchers.any())).thenReturn(plan);
 
         GuardResult blocked = GuardResult.block(List.of(step2),
                 "检测到支付操作，请确认是否继续？");
@@ -163,9 +176,11 @@ class AgentOrchestratorStreamGuardTest {
         request.setPlanEnabled(true);
         request.setConfirmTokens(Set.of("tok-step-1"));
 
-        AgentSkill skill = mockSkill("shopping_guide");
+        AgentSkill skill = mockSkill("trade");
         when(conversationService.getOrCreateSession("sess-003", 1L)).thenReturn("sess-003");
-        when(skillSelector.select("帮我直接下单 iPhone 16", null)).thenReturn(skill);
+        when(skillSelector.select(org.mockito.ArgumentMatchers.eq("帮我直接下单 iPhone 16"),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.anyString())).thenReturn(skill);
 
         PlanStep step = new PlanStep();
         step.setStepId("step-1");
@@ -217,6 +232,49 @@ class AgentOrchestratorStreamGuardTest {
                 .contains("\"confirmMessage\":\"确认下单吗？\"")
                 .contains("\"stepId\":\"step-1\"")
                 .contains("\"toolName\":\"createOrder\"");
+    }
+
+    @Test
+    void chatStream_shoppingGuide_usesNativeToolLoopAndSkipsPlanner() {
+        ChatRequest request = new ChatRequest();
+        request.setMessage("2000 元拍照好的手机");
+        request.setSessionId("sess-guide");
+        request.setPlanEnabled(true);
+
+        AgentSkill skill = mockSkill("shopping_guide");
+        when(skill.usesNativeToolCalling()).thenReturn(true);
+        when(conversationService.getOrCreateSession("sess-guide", 1L)).thenReturn("sess-guide");
+        when(skillSelector.select(org.mockito.ArgumentMatchers.eq("2000 元拍照好的手机"),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.anyString())).thenReturn(skill);
+
+        ToolResult searched = ToolResult.builder()
+                .toolName("hybridSearchProduct")
+                .status("SUCCESS")
+                .result("[]")
+                .build();
+        ShoppingGuideChat shoppingGuideChatMock = mock(ShoppingGuideChat.class);
+        when(shoppingGuideChatMock.streamTokens(
+                org.mockito.ArgumentMatchers.eq(skillClient),
+                org.mockito.ArgumentMatchers.eq("sess-guide"),
+                org.mockito.ArgumentMatchers.eq("2000 元拍照好的手机"),
+                org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.any()))
+                .thenReturn(Flux.just("推荐", "这几款"));
+        AgentOrchestrator guideOrchestrator = new AgentOrchestrator(
+                conversationService, skillSelector, plannerService, planExecutor, reActPlanExecutor,
+                highRiskActionGuard, shoppingGuideChatMock, chatClient, chatMemory, objectMapper, false);
+
+        AgentStreamResponse response = guideOrchestrator.chatStream(request, 1L);
+
+        assertThat(response.getSkillId()).isEqualTo("shopping_guide");
+        assertThat(response.getPlan()).isNull();
+        assertThat(response.getIncrementalToolStream()).isTrue();
+        assertThat(response.getToolResults()).isEmpty();
+        assertThat(response.getToolEventFlux()).isNotNull();
+        assertThat(String.join("", response.getContent().collectList().block())).isEqualTo("推荐这几款");
+        verify(plannerService, never()).plan(any(), any());
+        verify(highRiskActionGuard, never()).check(any(), any(), any());
     }
 
     private AgentSkill mockSkill(String skillId) {

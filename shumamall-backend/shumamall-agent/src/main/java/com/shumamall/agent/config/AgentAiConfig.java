@@ -14,6 +14,7 @@ import org.springframework.ai.tool.method.MethodToolCallbackProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 /**
  * Agent 服务 AI 组件装配。
@@ -25,8 +26,8 @@ import org.springframework.context.annotation.Configuration;
  * {@link ChatMemory}：基于 {@link RedisChatMemoryRepository} 的滑动窗口记忆，
  * 由 {@link MessageChatMemoryAdvisor} 在每请求注入/写回（会话 ID 经 advisor param 透传）。
  * <p>
- * {@link ToolCallbackProvider}：把 {@code @Tool} 工具类统一注册为框架的
- * ToolCallback，供规划模块的 {@link ToolCatalog} 消费。
+ * {@link ToolCallbackProvider}：全量工具供规划模块的 {@link com.shumamall.agent.planning.ToolCatalog}；
+ * 导购另注册一份只读工具，交给 ChatClient 的 tools 字段做原生 function calling。
  * <p>
  * ChatClient 为不可变组件，每个技能的差异化系统提示词 / 记忆 Advisor
  * 通过 {@link ChatClient#mutate()} 派生，不在全局 Bean 上做改动。
@@ -49,6 +50,7 @@ public class AgentAiConfig {
     }
 
     @Bean
+    @Primary
     public ToolCallbackProvider agentToolProvider(ProductSearchTool productSearchTool,
                                                   HybridSearchTool hybridSearchTool,
                                                   CartTool cartTool,
@@ -56,6 +58,17 @@ public class AgentAiConfig {
                                                   AddressUserTool addressUserTool) {
         return MethodToolCallbackProvider.builder()
                 .toolObjects(productSearchTool, hybridSearchTool, cartTool, orderTool, addressUserTool)
+                .build();
+    }
+
+    /**
+     * 导购原生工具循环只挂只读检索，避免模型在 function calling 里直接下单或加购。
+     */
+    @Bean
+    public ToolCallbackProvider shoppingGuideToolProvider(ProductSearchTool productSearchTool,
+                                                          HybridSearchTool hybridSearchTool) {
+        return MethodToolCallbackProvider.builder()
+                .toolObjects(productSearchTool, hybridSearchTool)
                 .build();
     }
 }

@@ -16,6 +16,9 @@ const listRef = ref<HTMLElement | null>(null);
 
 /** ReAct 多轮工具调用开关 */
 const reactEnabled = ref(false);
+/** 空字符串表示服务端自动路由；可固定为 trade 等避免被导购技能承接 */
+type SkillMode = '' | 'shopping_guide' | 'trade' | 'personal';
+const skillMode = ref<SkillMode>('');
 /** 当前会话已确认执行的高风险操作凭据（Human-in-the-Loop，由服务端签发，仅原样回传） */
 const confirmTokens = ref<string[]>([]);
 /** 最近一次用户消息文本，用于确认后自动重发 */
@@ -38,6 +41,24 @@ let streamAbort: AbortController | null = null;
  * breaks:true —— 单换行渲染为 <br>（AI 用 "- " 分点的行必须换行展示）
  * 解析失败回退为纯文本（转义 HTML 后原样展示，避免样式丢失）
  */
+/** 折叠面板标题：步数/次数摘要，默认收起，不挡正文阅读。 */
+function toolTraceSummary(msg: ChatMessage): string {
+  const tools = msg.toolResults?.length ?? 0;
+  const planSteps = msg.plan?.steps?.length ?? 0;
+  const skill = msg.skillId ? ` · ${msg.skillId}` : '';
+  if (planSteps > 0) {
+    return `工具与规划（${planSteps} 步，已执行 ${tools} 次）${skill}`;
+  }
+  if (tools > 0) {
+    return `工具调用（${tools} 次）${skill}`;
+  }
+  return `工具调用${skill}`;
+}
+
+function hasToolTrace(msg: ChatMessage): boolean {
+  return (msg.toolResults?.length ?? 0) > 0 || (msg.plan?.steps?.length ?? 0) > 0;
+}
+
 function renderMarkdown(text: string): string {
   if (!text) return '';
   try {
@@ -125,13 +146,18 @@ watch(
 );
 
 /* ---------------- 对话（流式） ---------------- */
-const quickCmds: string[] = [
-  '帮我搜索3000块左右的手机',
-  '查看我的购物车',
-  '查看我的订单',
-  '把 MacBook Air M3 加入购物车',
-  '帮我下单 TestPhone，1 件',
-  '查看我的默认地址',
+interface QuickCmd {
+  text: string;
+  skillId?: SkillMode;
+}
+
+const quickCmds: QuickCmd[] = [
+  { text: '帮我搜索3000块左右的手机', skillId: 'shopping_guide' },
+  { text: '查看我的购物车', skillId: 'trade' },
+  { text: '查看我的订单', skillId: 'trade' },
+  { text: '把 MacBook Air M3 加入购物车', skillId: 'trade' },
+  { text: '帮我下单 TestPhone，1 件', skillId: 'trade' },
+  { text: '查看我的默认地址', skillId: 'personal' },
 ];
 
 /**
@@ -155,9 +181,10 @@ function abortStream(): void {
  *                 那条消息用户已经看到过，重复补一条会让同一句话在界面上出现两次，
  *                 而且此时用户可能正在输入别的内容，不该被清空。
  */
-async function send(text?: string, echoUser = true): Promise<void> {
+async function send(text?: string, echoUser = true, skillOverride?: SkillMode): Promise<void> {
   const content = (text ?? input.value).trim();
   if (!content || sending.value) return;
+  const skillId = skillOverride ?? (skillMode.value || undefined);
   if (!isLoggedIn.value) {
     ElMessage.warning('请先登录');
     return;
@@ -199,7 +226,14 @@ async function send(text?: string, echoUser = true): Promise<void> {
           }
           assistantMsg.skillId = meta.skillId;
           assistantMsg.plan = meta.plan;
-          assistantMsg.toolResults = meta.toolResults;
+          assistantMsg.toolResults = meta.toolResults ?? [];
+          scrollToBottom();
+        },
+        onTool: (tr) => {
+          if (!assistantMsg.toolResults) {
+            assistantMsg.toolResults = [];
+          }
+          assistantMsg.toolResults.push(tr);
           scrollToBottom();
         },
         onConfirm: (confirm: ConfirmEvent) => {
@@ -219,6 +253,7 @@ async function send(text?: string, echoUser = true): Promise<void> {
       {
         confirmTokens: confirmTokens.value,
         reactEnabled: reactEnabled.value,
+        skillId,
         signal: controller.signal,
       },
     );
@@ -386,7 +421,8 @@ onUnmounted(abortStream);
       </div>
     </aside>
 
-    <!-- 消息区 -->
+    <!-- 右侧：消息区 + 输入区（与侧栏并列，输入框在底部而非整页最右列） -->
+    <div class="chat-main">
     <main ref="listRef" class="chat-body">
       <el-empty
         v-if="messages.length === 0"
@@ -408,50 +444,59 @@ onUnmounted(abortStream);
             <div v-if="msg.content" class="md-body" v-html="renderMarkdown(msg.content)" />
             <div v-else class="thinking">正在思考…</div>
 
-            <!-- 工具调用过程卡片 -->
-            <template v-if="msg.toolResults?.length">
-              <el-divider content-position="left">工具调用（{{ msg.plan?.steps.length ?? 0 }} 步规划）</el-divider>
-              <div class="plan-goal">
-                目标：{{ msg.plan?.goal ?? '-' }} ｜ 技能：{{ msg.skillId }}
-              </div>
-              <el-collapse>
-                <el-collapse-item
-                  v-for="(tr, idx) in msg.toolResults"
-                  :key="idx"
-                  :title="`${tr.toolName} · ${tr.status}`"
-                >
-                  <div class="tool-block">
-                    <div class="tool-field">
-                      <span class="field-label">参数</span>
-                      <pre>{{ tr.args }}</pre>
+            <!-- 工具/规划：默认折叠，正文优先 -->
+            <el-collapse v-if="hasToolTrace(msg)" class="tool-trace-collapse">
+              <el-collapse-item :name="msg.id" :title="toolTraceSummary(msg)">
+                <div v-if="msg.plan?.goal" class="plan-goal">目标：{{ msg.plan.goal }}</div>
+                <el-collapse v-if="msg.toolResults?.length" class="tool-detail-collapse">
+                  <el-collapse-item
+                    v-for="(tr, idx) in msg.toolResults"
+                    :key="idx"
+                    :name="`${msg.id}-${idx}`"
+                    :title="`${tr.toolName} · ${tr.status}`"
+                  >
+                    <div class="tool-block">
+                      <div class="tool-field">
+                        <span class="field-label">参数</span>
+                        <pre>{{ tr.args }}</pre>
+                      </div>
+                      <div class="tool-field">
+                        <span class="field-label">结果</span>
+                        <pre>{{ tr.result }}</pre>
+                      </div>
                     </div>
-                    <div class="tool-field">
-                      <span class="field-label">结果</span>
-                      <pre>{{ tr.result }}</pre>
-                    </div>
-                  </div>
-                </el-collapse-item>
-              </el-collapse>
-            </template>
+                  </el-collapse-item>
+                </el-collapse>
+                <p v-else-if="msg.plan?.steps?.length" class="plan-steps-hint">
+                  规划 {{ msg.plan.steps.length }} 步，工具执行结果将随流式推送追加。
+                </p>
+              </el-collapse-item>
+            </el-collapse>
           </template>
         </div>
       </div>
     </main>
 
-    <!-- 输入区 -->
     <footer class="chat-footer">
       <div class="quick-cmds">
         <el-tag
           v-for="cmd in quickCmds"
-          :key="cmd"
+          :key="cmd.text"
           class="quick-tag"
           effect="plain"
-          @click="send(cmd)"
+          @click="send(cmd.text, true, cmd.skillId)"
         >
-          {{ cmd }}
+          {{ cmd.text }}
         </el-tag>
       </div>
       <div class="options-row">
+        <span class="skill-label">助手模式</span>
+        <el-radio-group v-model="skillMode" size="small" :disabled="sending">
+          <el-radio-button label="">自动</el-radio-button>
+          <el-radio-button label="shopping_guide">导购</el-radio-button>
+          <el-radio-button label="trade">交易</el-radio-button>
+          <el-radio-button label="personal">个人</el-radio-button>
+        </el-radio-group>
         <el-switch
           v-model="reactEnabled"
           active-text="ReAct 多轮调用"
@@ -478,24 +523,39 @@ onUnmounted(abortStream);
           {{ sending ? '回复生成中…' : '发送' }}
         </el-button>
       </div>
+      <p v-if="skillMode" class="hint hint-warn">
+        当前固定为「{{ skillMode === 'shopping_guide' ? '导购' : skillMode === 'trade' ? '交易' : '个人' }}」模式，不会自动切换技能；查订单请选「自动」或「交易」。
+      </p>
       <p class="hint">
         会话 ID：{{ sessionId.slice(0, 16) }}…（存于浏览器 localStorage，清空浏览器数据或刷新页面后可重开新会话）
       </p>
     </footer>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .chat-page {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: row;
+  overflow: hidden;
+}
+
+.chat-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* 左侧会话列表 */
 .chat-sidebar {
   width: 260px;
   flex-shrink: 0;
+  min-height: 0;
   border-right: 1px solid #e4e7ed;
   background: #fff;
   display: flex;
@@ -686,6 +746,25 @@ onUnmounted(abortStream);
   color: #409eff;
   text-decoration: none;
 }
+.tool-trace-collapse {
+  margin-top: 12px;
+  border-top: 1px solid #ebeef5;
+  padding-top: 4px;
+}
+.tool-trace-collapse :deep(.el-collapse-item__header) {
+  font-size: 13px;
+  color: #606266;
+  height: 36px;
+  line-height: 36px;
+}
+.tool-detail-collapse {
+  margin-top: 6px;
+}
+.plan-steps-hint {
+  margin: 0;
+  font-size: 12px;
+  color: #909399;
+}
 .plan-goal {
   font-size: 13px;
   color: #909399;
@@ -719,6 +798,7 @@ onUnmounted(abortStream);
 
 /* 输入区 */
 .chat-footer {
+  flex-shrink: 0;
   padding: 12px 24px 16px;
   background: #fff;
   border-top: 1px solid #e4e7ed;
@@ -747,6 +827,9 @@ onUnmounted(abortStream);
 .input-row {
   display: flex;
   gap: 10px;
+}
+.hint-warn {
+  color: #e6a23c;
 }
 .hint {
   margin: 8px 0 0;

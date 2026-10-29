@@ -9,8 +9,8 @@ import org.springframework.stereotype.Component;
 /**
  * 技能选择器：根据用户消息路由到合适的技能。
  * <p>
- * 默认走 LLM 路由（结构化输出 {@link SkillSelection}）；
- * mock-llm 模式下退化为关键词规则，保证无真实模型时链路可演示。
+ * 自动模式下优先 LLM 路由（结构化输出 {@link SkillSelection}）；
+ * LLM 失败或未配置真实模型时退化为关键词规则。前端显式指定的 skillId 始终优先。
  */
 @Slf4j
 @Component
@@ -38,13 +38,26 @@ public class SkillSelector {
      * @return 命中的技能，兜底为导购技能
      */
     public AgentSkill select(String userMessage, String preferredSkillId) {
+        return select(userMessage, preferredSkillId, "");
+    }
+
+    /**
+     * @param conversationContext 近期会话摘要，用于「再查一次」等短句延续订单/导购话题
+     */
+    public AgentSkill select(String userMessage, String preferredSkillId, String conversationContext) {
         if (preferredSkillId != null && !preferredSkillId.isBlank()) {
             AgentSkill preferred = skillRegistry.findById(preferredSkillId);
             if (preferred != null) {
+                log.info("技能路由结果: skillId={} (前端指定)", preferred.getSkillId());
                 return preferred;
             }
         }
-        AgentSkill skill = mockLlm ? ruleBasedSelect(userMessage) : llmSelect(userMessage);
+        AgentSkill skill = mockLlm
+                ? ruleBasedSelect(userMessage, conversationContext)
+                : llmSelect(userMessage, conversationContext);
+        if (skill == null) {
+            skill = ruleBasedSelect(userMessage, conversationContext);
+        }
         if (skill == null) {
             skill = skillRegistry.findById(DEFAULT_SKILL_ID);
         }
@@ -52,31 +65,65 @@ public class SkillSelector {
         return skill;
     }
 
-    private AgentSkill llmSelect(String userMessage) {
+    private AgentSkill llmSelect(String userMessage, String conversationContext) {
         try {
             BeanOutputConverter<SkillSelection> converter = new BeanOutputConverter<>(SkillSelection.class);
             String prompt = """
-                    你是技能路由器。根据用户消息从以下技能中选择最合适的一个，只输出 JSON。
+                    你是技能路由器。根据用户消息与会话上下文从以下技能中选择最合适的一个，只输出 JSON。
+                    %s
+                    路由规则（必须遵守）：
+                    - 购物车、加购、下单、支付、结算、查订单/订单号/取消订单 → trade（含 ORD 订单号、订单列表、历史订单）
+                    - 收货地址、个人资料、账号昵称手机号 → personal
+                    - 仅商品搜索、比参数、推荐买什么、不涉及订单与购物车 → shopping_guide
+                    - 当前句很短（如「再查一次」「再试试」「好的」）时，必须根据会话上下文判断正在讨论的是订单还是商品
                     %s
                     用户消息：%s
-                    只返回 JSON，不要任何解释。""" .formatted(skillRegistry.describeAll(), userMessage);
+                    只返回 JSON，不要任何解释。""" .formatted(
+                    skillRegistry.describeAll(),
+                    formatContextBlock(conversationContext),
+                    userMessage);
             String json = chatClient.prompt().user(prompt).call().content();
             SkillSelection selection = converter.convert(json);
             return skillRegistry.findById(selection.getSkillId());
         } catch (Exception e) {
             log.warn("LLM 技能路由失败，退回规则选择: err={}", e.getMessage());
-            return ruleBasedSelect(userMessage);
+            return ruleBasedSelect(userMessage, conversationContext);
         }
     }
 
-    private AgentSkill ruleBasedSelect(String userMessage) {
-        if (containsAny(userMessage, "购物车", "下单", "订单", "取消", "支付", "结算", "买")) {
+    private AgentSkill ruleBasedSelect(String userMessage, String conversationContext) {
+        if (signalsTrade(userMessage) || signalsTrade(conversationContext)) {
             return skillRegistry.findById("trade");
         }
-        if (containsAny(userMessage, "地址", "个人信息", "我的信息", "账号", "昵称", "手机号", "资料")) {
+        // personal 只看当前句，避免订单回复里的「收货地址」误触
+        if (signalsPersonal(userMessage)) {
             return skillRegistry.findById("personal");
         }
         return skillRegistry.findById(DEFAULT_SKILL_ID);
+    }
+
+    private boolean signalsTrade(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        if (containsAny(text, "购物车", "加购", "加入购物车", "下单", "订单", "取消", "支付", "结算", "付款", "结账", "ORD")) {
+            return true;
+        }
+        return text.contains("订单号") || text.contains("待付款") || text.contains("已取消");
+    }
+
+    private boolean signalsPersonal(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        return containsAny(text, "地址", "个人信息", "我的信息", "账号", "昵称", "手机号", "资料");
+    }
+
+    private String formatContextBlock(String conversationContext) {
+        if (conversationContext == null || conversationContext.isBlank()) {
+            return "";
+        }
+        return "会话上下文：\n" + conversationContext + "\n";
     }
 
     private boolean containsAny(String text, String... keywords) {

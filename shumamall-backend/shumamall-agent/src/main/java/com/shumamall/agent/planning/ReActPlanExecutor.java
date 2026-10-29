@@ -45,7 +45,8 @@ public class ReActPlanExecutor {
      * @param userId      当前用户
      * @return 所有轮次的工具执行结果（按执行顺序）
      */
-    public List<ToolResult> execute(AgentPlan initialPlan, String userMessage, AgentSkill skill, Long userId) {
+    public List<ToolResult> execute(AgentPlan initialPlan, String userMessage, AgentSkill skill, Long userId,
+                                    String planningContext) {
         List<ToolResult> allResults = new ArrayList<>();
         AgentPlan currentPlan = initialPlan;
         String currentMessage = userMessage;
@@ -65,7 +66,7 @@ public class ReActPlanExecutor {
 
             // 构造反思提示词，引导规划器调整策略
             currentMessage = buildRethinkMessage(userMessage, roundResults);
-            currentPlan = plannerService.plan(currentMessage, skill);
+            currentPlan = plannerService.plan(currentMessage, skill, planningContext);
             log.info("ReAct 重新规划: round={}, planSteps={}", round + 1,
                     currentPlan.getSteps() == null ? 0 : currentPlan.getSteps().size());
         }

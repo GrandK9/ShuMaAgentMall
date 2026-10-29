@@ -29,7 +29,7 @@ public class PlannerService {
     public PlannerService(ChatClient chatClient,
                           ToolCatalog toolCatalog,
                           @Value("${shumamall.agent.mock-llm:false}") boolean mockLlm,
-                          @Value("${shumamall.agent.planning.max-steps:5}") int maxSteps) {
+                          @Value("${shumamall.agent.planning.max-steps:15}") int maxSteps) {
         this.chatClient = chatClient;
         this.toolCatalog = toolCatalog;
         this.mockLlm = mockLlm;
@@ -44,11 +44,15 @@ public class PlannerService {
      * @return 校验通过的计划
      */
     public AgentPlan plan(String userMessage, AgentSkill skill) {
-        AgentPlan plan = mockLlm ? ruleBasedPlan(userMessage) : llmPlan(userMessage, skill);
+        return plan(userMessage, skill, "");
+    }
+
+    public AgentPlan plan(String userMessage, AgentSkill skill, String conversationContext) {
+        AgentPlan plan = mockLlm ? ruleBasedPlan(userMessage) : llmPlan(userMessage, skill, conversationContext);
         return validate(plan);
     }
 
-    private AgentPlan llmPlan(String userMessage, AgentSkill skill) {
+    private AgentPlan llmPlan(String userMessage, AgentSkill skill, String conversationContext) {
         BeanOutputConverter<AgentPlan> converter = new BeanOutputConverter<>(AgentPlan.class);
         String prompt = """
                 你是任务规划器。根据用户消息与当前技能边界，选择可用工具生成一份顺序执行的计划，只输出 JSON。
@@ -64,15 +68,20 @@ public class PlannerService {
                 规则：
                 - 步骤最多 %d 步，优先用最少步骤完成目标
                 - 下单前需要地址时，先规划 getAddressList 查询地址
-                - createOrder / addToCart 的 productKeyword 参数必须填用户消息中的商品名称，禁止填 0 或猜测的 ID
+                - 用户给出 ORD 订单号时用 getOrderByOrderNo；查列表用 listOrders，需要更多历史订单时递增 page
+                - 不要假设 listOrders 只有一页，看返回的 total 与 page 决定是否继续查下一页
+                - createOrder / addToCart 的 productKeyword 必须填可检索的具体商品名（如 TestPhone、MacBook Air M3），禁止填「这几款」「上面商品」等指代词
+                - 用户当前句未点名商品时，从会话上下文中解析导购刚推荐过的商品名，每个商品单独一步 addToCart / createOrder
                 - 工具参数中的数字 ID（productId/skuId/addressId）如果用户没有明确给出，一律省略，工具会自动解析
                 - 只返回 JSON，不要任何解释
+                %s
                 %s
                 用户消息：%s""".formatted(
                 skill.getSkillId(),
                 toolCatalog.buildToolingPrompt(),
                 maxSteps,
                 converter.getFormat(),
+                formatContextBlock(conversationContext),
                 userMessage);
         try {
             String json = chatClient.prompt().user(prompt).call().content();
@@ -144,6 +153,14 @@ public class PlannerService {
         step.setToolName(toolName);
         step.setParams(params);
         return step;
+    }
+
+    private String formatContextBlock(String conversationContext) {
+        if (conversationContext == null || conversationContext.isBlank()) {
+            return "";
+        }
+        return "会话上下文（规划 addToCart/createOrder 时必须从这里提取具体商品名）：\n"
+                + conversationContext + "\n";
     }
 
     private boolean containsAny(String text, String... keywords) {
