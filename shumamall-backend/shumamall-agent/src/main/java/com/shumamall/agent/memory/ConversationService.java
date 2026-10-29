@@ -82,17 +82,24 @@ public class ConversationService {
      * 截取最近若干条会话，供规划器解析「上面几款」等指代（与回复生成用的记忆一致，但单独拼进规划 prompt）。
      */
     public String buildPlanningContext(String sessionId, int maxMessages) {
-        List<Message> history = memoryRepository.findByConversationId(sessionId);
-        if (history == null || history.isEmpty()) {
+        MemoryEnvelope envelope = memoryRepository.loadEnvelope(sessionId);
+        List<Message> history = envelope.getMessages();
+        if ((history == null || history.isEmpty())
+                && (envelope.getSummary() == null || envelope.getSummary().isBlank())) {
             return "";
         }
-        int from = Math.max(0, history.size() - Math.max(1, maxMessages));
         StringBuilder sb = new StringBuilder();
-        for (Message message : history.subList(from, history.size())) {
-            sb.append(message.getMessageType().name())
-                    .append(": ")
-                    .append(message.getText())
-                    .append('\n');
+        if (envelope.getSummary() != null && !envelope.getSummary().isBlank()) {
+            sb.append("SUMMARY: ").append(envelope.getSummary()).append('\n');
+        }
+        if (history != null && !history.isEmpty()) {
+            int from = Math.max(0, history.size() - Math.max(1, maxMessages));
+            for (Message message : history.subList(from, history.size())) {
+                sb.append(message.getMessageType().name())
+                        .append(": ")
+                        .append(message.getText())
+                        .append('\n');
+            }
         }
         return sb.toString().trim();
     }

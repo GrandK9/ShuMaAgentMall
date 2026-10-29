@@ -1,5 +1,8 @@
 package com.shumamall.agent.config;
 
+import com.shumamall.agent.memory.ConversationSummaryService;
+import com.shumamall.agent.memory.RedisChatMemoryRepository;
+import com.shumamall.agent.memory.SummarizingMessageWindowChatMemory;
 import com.shumamall.agent.tools.AddressUserTool;
 import com.shumamall.agent.tools.CartTool;
 import com.shumamall.agent.tools.HybridSearchTool;
@@ -7,8 +10,6 @@ import com.shumamall.agent.tools.OrderTool;
 import com.shumamall.agent.tools.ProductSearchTool;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
-import org.springframework.ai.chat.memory.ChatMemoryRepository;
-import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,8 +24,8 @@ import org.springframework.context.annotation.Primary;
  * {@link ChatClient.Builder} 构建（其底层模型由 OpenAiChatModel 或
  * MockChatModel 按 {@code shumamall.agent.mock-llm} 开关提供）。
  * <p>
- * {@link ChatMemory}：基于 {@link RedisChatMemoryRepository} 的滑动窗口记忆，
- * 由 {@link MessageChatMemoryAdvisor} 在每请求注入/写回（会话 ID 经 advisor param 透传）。
+ * {@link ChatMemory}：Redis 滑动窗口 + 超轮数时大模型滚动摘要（见 {@link SummarizingMessageWindowChatMemory}），
+ * 由 {@link org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor} 注入/写回。
  * <p>
  * {@link ToolCallbackProvider}：全量工具供规划模块的 {@link com.shumamall.agent.planning.ToolCatalog}；
  * 导购另注册一份只读工具，交给 ChatClient 的 tools 字段做原生 function calling。
@@ -41,12 +42,21 @@ public class AgentAiConfig {
     }
 
     @Bean
-    public ChatMemory chatMemory(ChatMemoryRepository repository,
-                                 @Value("${shumamall.agent.memory.max-messages:20}") int maxMessages) {
-        return MessageWindowChatMemory.builder()
-                .chatMemoryRepository(repository)
-                .maxMessages(maxMessages)
+    public ChatClient summaryChatClient(ChatClient chatClient) {
+        return chatClient.mutate()
+                .defaultSystem("你是会话摘要维护器，只输出合并后的摘要正文。")
                 .build();
+    }
+
+    @Bean
+    public ChatMemory chatMemory(RedisChatMemoryRepository repository,
+                                 ConversationSummaryService summaryService,
+                                 @Value("${shumamall.agent.memory.max-messages:20}") int maxMessages,
+                                 @Value("${shumamall.agent.memory.compress-after-rounds:6}") int compressAfterRounds,
+                                 @Value("${shumamall.agent.memory.keep-recent-messages:8}") int keepRecentMessages,
+                                 @Value("${shumamall.agent.memory.summarize-enabled:true}") boolean summarizeEnabled) {
+        return new SummarizingMessageWindowChatMemory(
+                repository, summaryService, maxMessages, compressAfterRounds, keepRecentMessages, summarizeEnabled);
     }
 
     @Bean

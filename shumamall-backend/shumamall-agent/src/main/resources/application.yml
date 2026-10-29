@@ -40,10 +40,16 @@ shumamall:
     mock-llm: false
     model: deepseek-chat
     memory:
-      # 单个会话保留的最大消息数
+      # 单个会话保留的最大消息数（原文条数上限）
       max-messages: 20
       # 会话 TTL（分钟），到期自动清理
       ttl-minutes: 30
+      # 是否启用大模型滚动摘要（与 messages 同 Redis key 存储）
+      summarize-enabled: true
+      # 当前保留轮数 > 该值时，每轮 add 至多压缩一次（>6 即第 7 轮起，≥14 条消息）
+      compress-after-rounds: 6
+      # 压缩后至少保留的最近原文条数
+      keep-recent-messages: 8
     planning:
       # 单次规划最多几步（加购多件 + 查地址/购物车等，演示场景宜放宽；过大则拖慢且易幻觉）
       max-steps: 15
