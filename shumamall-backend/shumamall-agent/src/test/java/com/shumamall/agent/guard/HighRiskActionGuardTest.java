@@ -141,8 +141,9 @@ class HighRiskActionGuardTest {
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         verify(valueOps).set(eq(PENDING_PLAN_KEY), payload.capture(),
                 eq(Duration.ofSeconds(ConfirmTokenService.TTL_SECONDS)));
-        // 缓存的是整份计划本体，而不是只留一个标记——复用时才能原样执行用户确认过的操作
-        assertThat(payload.getValue()).contains("帮我下单 AirPods").contains("createOrder");
+        // 缓存整份 plan；用户句只存指纹，不存明文
+        assertThat(payload.getValue()).contains("messageHash").contains("createOrder");
+        assertThat(payload.getValue()).doesNotContain("帮我下单 AirPods");
     }
 
     @Test
@@ -151,7 +152,7 @@ class HighRiskActionGuardTest {
         PlanStep risky = step("s2", "createOrder", "创建订单");
         risky.setConfirmToken("tok-上一轮签发");
         when(valueOps.get(PENDING_PLAN_KEY)).thenReturn(objectMapper.writeValueAsString(
-                new HighRiskActionGuard.PendingPlan("帮我下单 AirPods",
+                new HighRiskActionGuard.PendingPlan(UserMessageFingerprint.of("帮我下单 AirPods"),
                         plan(step("s1", "searchProduct", "搜索商品"), risky))));
 
         AgentPlan loaded = guard.loadPendingPlan(SESSION_ID, "帮我下单 AirPods");
@@ -168,10 +169,20 @@ class HighRiskActionGuardTest {
     void loadPendingPlan_消息不一致_不复用() throws Exception {
         ValueOperations<String, String> valueOps = valueOps();
         when(valueOps.get(PENDING_PLAN_KEY)).thenReturn(objectMapper.writeValueAsString(
-                new HighRiskActionGuard.PendingPlan("帮我下单 AirPods",
+                new HighRiskActionGuard.PendingPlan(UserMessageFingerprint.of("帮我下单 AirPods"),
                         plan(step("s1", "createOrder", "创建订单")))));
 
         assertThat(guard.loadPendingPlan(SESSION_ID, "再推荐几款耳机")).isNull();
+    }
+
+    @Test
+    void loadPendingPlan_旧版明文message字段_仍可复用() throws Exception {
+        ValueOperations<String, String> valueOps = valueOps();
+        when(valueOps.get(PENDING_PLAN_KEY)).thenReturn(objectMapper.writeValueAsString(
+                new HighRiskActionGuard.PendingPlan(null,
+                        plan(step("s1", "createOrder", "创建订单")), "帮我下单 AirPods")));
+
+        assertThat(guard.loadPendingPlan(SESSION_ID, "帮我下单 AirPods")).isNotNull();
     }
 
     @Test

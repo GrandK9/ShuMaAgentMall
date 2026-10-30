@@ -1,5 +1,7 @@
 package com.shumamall.agent.guard;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shumamall.agent.planning.AgentPlan;
 import com.shumamall.agent.planning.PlanStep;
@@ -16,7 +18,6 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -126,13 +127,14 @@ public class HighRiskActionGuard {
      * 语义上也更正确 —— 执行的就是用户看到并确认过的那一份操作。
      *
      * @param sessionId 会话 ID
-     * @param message   触发本次计划的用户消息（复用时必须比对该消息）
+     * @param message   触发本次计划的用户消息（复用时比对规范化后的 SHA-256 指纹）
      * @param plan      被拦截的计划
      */
     public void rememberPendingPlan(String sessionId, String message, AgentPlan plan) {
         try {
             redisTemplate.opsForValue().set(PENDING_PLAN_KEY_PREFIX + sessionId,
-                    objectMapper.writeValueAsString(new PendingPlan(message, plan)),
+                    objectMapper.writeValueAsString(
+                            new PendingPlan(UserMessageFingerprint.of(message), plan)),
                     Duration.ofSeconds(ConfirmTokenService.TTL_SECONDS));
         } catch (Exception e) {
             // 缓存失败不阻断主流程：退化为「重新规划」，最坏情况是多弹一次确认框
@@ -156,7 +158,8 @@ public class HighRiskActionGuard {
             }
             PendingPlan pending = objectMapper.readValue(raw, PendingPlan.class);
             AgentPlan plan = pending.plan();
-            if (!Objects.equals(pending.message(), message)) {
+            String expectedHash = pending.resolveMessageHash();
+            if (expectedHash == null || !expectedHash.equals(UserMessageFingerprint.of(message))) {
                 log.info("待确认计划与本次消息不一致，改为重新规划: sessionId={}", sessionId);
                 return null;
             }
@@ -180,9 +183,27 @@ public class HighRiskActionGuard {
     }
 
     /**
-     * 缓存载荷：计划 + 它对应的用户消息。
+     * 缓存载荷：计划 + 用户消息指纹（不存明文，避免 Redis 重复长文本与字符串逐字比对）。
+     * <p>
+     * {@code legacyMessage} 仅用于读取旧版 Redis 条目，新写入不再带该字段。
      */
-    public record PendingPlan(String message, AgentPlan plan) {
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record PendingPlan(String messageHash, AgentPlan plan,
+                              @JsonProperty("message") String legacyMessage) {
+
+        public PendingPlan(String messageHash, AgentPlan plan) {
+            this(messageHash, plan, null);
+        }
+
+        String resolveMessageHash() {
+            if (StringUtils.hasText(messageHash)) {
+                return messageHash;
+            }
+            if (StringUtils.hasText(legacyMessage)) {
+                return UserMessageFingerprint.of(legacyMessage);
+            }
+            return null;
+        }
     }
 
     /**
