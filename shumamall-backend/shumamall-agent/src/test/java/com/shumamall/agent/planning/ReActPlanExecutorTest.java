@@ -1,5 +1,7 @@
 package com.shumamall.agent.planning;
 
+import com.shumamall.agent.config.AgentPromptProvider;
+import com.shumamall.agent.config.AgentRuntimeProperties;
 import com.shumamall.agent.dto.ToolResult;
 import com.shumamall.agent.skill.AgentSkill;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,8 +38,10 @@ class ReActPlanExecutorTest {
 
     @BeforeEach
     void setUp() {
-        // maxRounds=2
-        executor = new ReActPlanExecutor(plannerService, planExecutor, 2);
+        AgentRuntimeProperties properties = new AgentRuntimeProperties();
+        properties.getReact().setMaxRounds(2);
+        AgentPromptProvider promptProvider = new AgentPromptProvider(properties);
+        executor = new ReActPlanExecutor(plannerService, planExecutor, promptProvider, properties);
     }
 
     private AgentPlan plan(String... toolNames) {

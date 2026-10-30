@@ -14,6 +14,7 @@ spring:
       config:
         server-addr: localhost:8848
         file-extension: yaml
+        refresh-enabled: true
         # 不能用 public 命名空间：取不到配置的完整原因见 shumamall-comment/bootstrap.yml
         namespace: shumamall
       discovery:

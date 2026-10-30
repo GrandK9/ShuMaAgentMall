@@ -100,7 +100,7 @@ public class AgentOrchestrator {
         String sessionId = conversationService.getOrCreateSession(request.getSessionId(), userId);
 
         // 2. 技能路由（带会话上下文，避免「再查一次」等短句误判为导购）
-        String routingContext = conversationService.buildPlanningContext(sessionId, 12);
+        String routingContext = conversationService.buildPlanningContext(sessionId);
         AgentSkill skill = skillSelector.select(request.getMessage(), request.getSkillId(), routingContext);
 
         // 3. 构建带技能系统提示词 + 记忆 Advisor 的客户端（每请求派生，互不影响）
@@ -181,7 +181,7 @@ public class AgentOrchestrator {
         String sessionId = conversationService.getOrCreateSession(request.getSessionId(), userId);
 
         // 2. 技能路由（带会话上下文，避免「再查一次」等短句误判为导购）
-        String routingContext = conversationService.buildPlanningContext(sessionId, 12);
+        String routingContext = conversationService.buildPlanningContext(sessionId);
         AgentSkill skill = skillSelector.select(request.getMessage(), request.getSkillId(), routingContext);
 
         // 3. 构建带技能系统提示词 + 记忆 Advisor 的客户端（每请求派生，互不影响）
@@ -304,7 +304,7 @@ public class AgentOrchestrator {
                 return pending;
             }
         }
-        String planningContext = conversationService.buildPlanningContext(sessionId, 12);
+        String planningContext = conversationService.buildPlanningContext(sessionId);
         return plannerService.plan(request.getMessage(), skill, planningContext);
     }
 
@@ -314,7 +314,7 @@ public class AgentOrchestrator {
     private List<ToolResult> executePlan(AgentPlan plan, ChatRequest request, AgentSkill skill, Long userId,
                                         String sessionId) {
         boolean reactEnabled = request.getReactEnabled() != null && request.getReactEnabled();
-        String planningContext = conversationService.buildPlanningContext(sessionId, 12);
+        String planningContext = conversationService.buildPlanningContext(sessionId);
         if (reactEnabled) {
             return reActPlanExecutor.execute(plan, request.getMessage(), skill, userId, planningContext);
         }

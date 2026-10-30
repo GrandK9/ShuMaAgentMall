@@ -1,5 +1,6 @@
 package com.shumamall.agent.skill.skills;
 
+import com.shumamall.agent.config.AgentPromptProvider;
 import com.shumamall.agent.skill.AgentSkill;
 import org.springframework.stereotype.Component;
 
@@ -8,6 +9,12 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class PersonalSkill implements AgentSkill {
+
+    private final AgentPromptProvider promptProvider;
+
+    public PersonalSkill(AgentPromptProvider promptProvider) {
+        this.promptProvider = promptProvider;
+    }
 
     @Override
     public String getSkillId() {
@@ -26,17 +33,6 @@ public class PersonalSkill implements AgentSkill {
 
     @Override
     public String buildSystemPrompt() {
-        return """
-                你是数码商城的个人中心助手，帮助用户查询账号信息。
-                
-                能力：
-                - 查询当前登录用户信息（工具：getUserInfo）
-                - 查询收货地址列表（工具：getAddressList）
-                
-                规则：
-                - 涉及用户隐私字段（手机号/邮箱）时仅展示脱敏信息
-                - 只读操作，不修改任何用户资料
-                - 回答简洁，用中文
-                """;
+        return promptProvider.systemPromptForSkill(getSkillId());
     }
 }

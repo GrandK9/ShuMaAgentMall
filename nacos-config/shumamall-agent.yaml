@@ -5,22 +5,47 @@
 # group    : DEFAULT_GROUP
 # namespace: shumamall
 #
-# 为什么单独抽一个 dataId：LLM 与 embedding 的 api-key 是**真实付费凭据**，
-# 不能留在 application.yml 里当默认值（提交即泄露）。这里只放密钥，
-# 其余非敏感配置仍在 shumamall-agent 的 application.yml。
+# 密钥占位符发布前替换；提示词与运行时参数可在控制台修改后「发布」触发热刷新
+# （需 agent bootstrap 中 spring.cloud.nacos.config.refresh-enabled: true）。
 #
-# 这是**模板**：两个占位符发布前替换为真实值，真实值文件不要提交到仓库。
+# 占位符说明（prompts 模板）：
+#   skill-router: {skillCatalog} {conversationContext} {userMessage}
+#   planner: {skillId} {toolCatalog} {outputFormatExample} {plannerRules} {outputSchema} {conversationContext} {userMessage}
+#   planner-rules 内可用 {maxSteps}
+#   summary-user: {existingSummary} {fragment}
+#   react-rethink-prefix: {userMessage}
 # ============================================================
 
 spring:
   ai:
     openai:
-      # DeepSeek（OpenAI 兼容协议）对话模型密钥
       api-key: "<DEEPSEEK_API_KEY>"
 
 shumamall:
   agent:
     search:
       embedding:
-        # 向量模型（BAAI/bge-large-zh-v1.5）密钥，与对话模型分离配置
         api-key: "<EMBEDDING_API_KEY>"
+
+    memory:
+      max-messages: 20
+      ttl-minutes: 30
+      summarize-enabled: true
+      compress-after-rounds: 6
+      keep-recent-messages: 8
+
+    planning:
+      max-steps: 15
+
+    react:
+      max-rounds: 2
+
+    context:
+      planning-max-messages: 12
+
+    # prompts:  # 按需取消注释并填写；未配置项走代码内 AgentPromptDefaults
+    #   skills:
+    #     shopping_guide: |
+    #       你是数码商城的智能导购助手…
+    #   planner-rules: |
+    #     - 步骤最多 {maxSteps} 步…

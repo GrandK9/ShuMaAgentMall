@@ -53,6 +53,17 @@ shumamall:
     planning:
       # 单次规划最多几步（加购多件 + 查地址/购物车等，演示场景宜放宽；过大则拖慢且易幻觉）
       max-steps: 15
+    react:
+      # ReAct 重规划最大轮数（检索失败时自动换策略再规划）
+      max-rounds: 2
+    context:
+      # 注入规划/技能路由的近期原文条数上限
+      planning-max-messages: 12
+    # 提示词模板可放 Nacos shumamall-agent.yaml 的 prompts 节点，发布后在 Nacos 控制台「发布」即热刷新
+    # prompts:
+    #   skills:
+    #     shopping_guide: |
+    #       ...
     search:
       # 向量模型（embedding）：与 chat 模型分离配置，因为 DeepSeek 只提供 chat，
       # 没有 /v1/embeddings 端点（实测 POST https://api.deepseek.com/embeddings 返回 404，

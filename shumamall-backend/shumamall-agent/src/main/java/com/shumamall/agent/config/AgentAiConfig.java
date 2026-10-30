@@ -12,7 +12,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cloud.context.config.annotation.RefreshScope;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
@@ -42,21 +42,26 @@ public class AgentAiConfig {
     }
 
     @Bean
-    public ChatClient summaryChatClient(ChatClient chatClient) {
+    @RefreshScope
+    public ChatClient summaryChatClient(ChatClient chatClient, AgentPromptProvider promptProvider) {
         return chatClient.mutate()
-                .defaultSystem("你是会话摘要维护器，只输出合并后的摘要正文。")
+                .defaultSystem(promptProvider.summarySystem())
                 .build();
     }
 
     @Bean
+    @RefreshScope
     public ChatMemory chatMemory(RedisChatMemoryRepository repository,
                                  ConversationSummaryService summaryService,
-                                 @Value("${shumamall.agent.memory.max-messages:20}") int maxMessages,
-                                 @Value("${shumamall.agent.memory.compress-after-rounds:6}") int compressAfterRounds,
-                                 @Value("${shumamall.agent.memory.keep-recent-messages:8}") int keepRecentMessages,
-                                 @Value("${shumamall.agent.memory.summarize-enabled:true}") boolean summarizeEnabled) {
+                                 AgentRuntimeProperties runtimeProperties) {
+        AgentRuntimeProperties.Memory memory = runtimeProperties.getMemory();
         return new SummarizingMessageWindowChatMemory(
-                repository, summaryService, maxMessages, compressAfterRounds, keepRecentMessages, summarizeEnabled);
+                repository,
+                summaryService,
+                memory.getMaxMessages(),
+                memory.getCompressAfterRounds(),
+                memory.getKeepRecentMessages(),
+                memory.isSummarizeEnabled());
     }
 
     @Bean

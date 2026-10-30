@@ -68,6 +68,7 @@ class AgentOrchestratorStreamGuardTest {
         when(chatClient.mutate()).thenReturn(builder);
         when(conversationService.buildPlanningContext(org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyInt())).thenReturn("");
+        when(conversationService.buildPlanningContext(org.mockito.ArgumentMatchers.anyString())).thenReturn("");
     }
 
     @Test

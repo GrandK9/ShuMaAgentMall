@@ -1,5 +1,6 @@
 package com.shumamall.agent.skill;
 
+import com.shumamall.agent.config.AgentPromptProvider;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.converter.BeanOutputConverter;
@@ -20,13 +21,16 @@ public class SkillSelector {
 
     private final SkillRegistry skillRegistry;
     private final ChatClient chatClient;
+    private final AgentPromptProvider promptProvider;
     private final boolean mockLlm;
 
     public SkillSelector(SkillRegistry skillRegistry,
                          ChatClient chatClient,
+                         AgentPromptProvider promptProvider,
                          @Value("${shumamall.agent.mock-llm:false}") boolean mockLlm) {
         this.skillRegistry = skillRegistry;
         this.chatClient = chatClient;
+        this.promptProvider = promptProvider;
         this.mockLlm = mockLlm;
     }
 
@@ -68,17 +72,7 @@ public class SkillSelector {
     private AgentSkill llmSelect(String userMessage, String conversationContext) {
         try {
             BeanOutputConverter<SkillSelection> converter = new BeanOutputConverter<>(SkillSelection.class);
-            String prompt = """
-                    你是技能路由器。根据用户消息与会话上下文从以下技能中选择最合适的一个，只输出 JSON。
-                    %s
-                    路由规则（必须遵守）：
-                    - 购物车、加购、下单、支付、结算、查订单/订单号/取消订单 → trade（含 ORD 订单号、订单列表、历史订单）
-                    - 收货地址、个人资料、账号昵称手机号 → personal
-                    - 仅商品搜索、比参数、推荐买什么、不涉及订单与购物车 → shopping_guide
-                    - 当前句很短（如「再查一次」「再试试」「好的」）时，必须根据会话上下文判断正在讨论的是订单还是商品
-                    %s
-                    用户消息：%s
-                    只返回 JSON，不要任何解释。""" .formatted(
+            String prompt = promptProvider.skillRouterUserTemplate(
                     skillRegistry.describeAll(),
                     formatContextBlock(conversationContext),
                     userMessage);

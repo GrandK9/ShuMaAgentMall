@@ -1,9 +1,10 @@
 package com.shumamall.agent.planning;
 
+import com.shumamall.agent.config.AgentPromptProvider;
+import com.shumamall.agent.config.AgentRuntimeProperties;
 import com.shumamall.agent.dto.ToolResult;
 import com.shumamall.agent.skill.AgentSkill;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -26,14 +27,21 @@ public class ReActPlanExecutor {
 
     private final PlannerService plannerService;
     private final PlanExecutor planExecutor;
-    private final int maxRounds;
+    private final AgentPromptProvider promptProvider;
+    private final AgentRuntimeProperties runtimeProperties;
 
     public ReActPlanExecutor(PlannerService plannerService,
                              PlanExecutor planExecutor,
-                             @Value("${shumamall.agent.react.max-rounds:2}") int maxRounds) {
+                             AgentPromptProvider promptProvider,
+                             AgentRuntimeProperties runtimeProperties) {
         this.plannerService = plannerService;
         this.planExecutor = planExecutor;
-        this.maxRounds = Math.max(1, maxRounds);
+        this.promptProvider = promptProvider;
+        this.runtimeProperties = runtimeProperties;
+    }
+
+    private int maxRounds() {
+        return Math.max(1, runtimeProperties.getReact().getMaxRounds());
     }
 
     /**
@@ -51,6 +59,7 @@ public class ReActPlanExecutor {
         AgentPlan currentPlan = initialPlan;
         String currentMessage = userMessage;
 
+        int maxRounds = maxRounds();
         for (int round = 1; round <= maxRounds; round++) {
             List<ToolResult> roundResults = planExecutor.execute(currentPlan, userId);
             allResults.addAll(roundResults);
@@ -92,8 +101,10 @@ public class ReActPlanExecutor {
     }
 
     private String buildRethinkMessage(String userMessage, List<ToolResult> results) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("用户原请求：").append(userMessage).append("\n\n");
+        StringBuilder sb = new StringBuilder(promptProvider.reactRethinkPrefix(userMessage));
+        if (!sb.isEmpty() && sb.charAt(sb.length() - 1) != '\n') {
+            sb.append('\n');
+        }
         sb.append("上一轮工具执行结果为空或失败，请调整检索策略（例如放宽价格区间、更换关键词）：\n");
         for (ToolResult r : results) {
             sb.append("- ").append(r.getToolName()).append(" : ").append(r.getStatus()).append("\n");

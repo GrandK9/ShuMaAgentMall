@@ -1,5 +1,6 @@
 package com.shumamall.agent.memory;
 
+import com.shumamall.agent.config.AgentRuntimeProperties;
 import com.shumamall.agent.dto.ChatSessionSummary;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.Message;
@@ -20,9 +21,12 @@ import java.util.List;
 public class ConversationService {
 
     private final RedisChatMemoryRepository memoryRepository;
+    private final AgentRuntimeProperties runtimeProperties;
 
-    public ConversationService(RedisChatMemoryRepository memoryRepository) {
+    public ConversationService(RedisChatMemoryRepository memoryRepository,
+                               AgentRuntimeProperties runtimeProperties) {
         this.memoryRepository = memoryRepository;
+        this.runtimeProperties = runtimeProperties;
     }
 
     /**
@@ -76,6 +80,11 @@ public class ConversationService {
      */
     public List<Message> findHistory(String sessionId) {
         return memoryRepository.findByConversationId(sessionId);
+    }
+
+    /** 使用 {@link AgentRuntimeProperties#getContext()} 中的 planningMaxMessages。 */
+    public String buildPlanningContext(String sessionId) {
+        return buildPlanningContext(sessionId, runtimeProperties.getContext().getPlanningMaxMessages());
     }
 
     /**

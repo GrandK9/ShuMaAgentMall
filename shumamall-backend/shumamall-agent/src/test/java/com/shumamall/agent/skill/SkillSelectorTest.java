@@ -1,5 +1,7 @@
 package com.shumamall.agent.skill;
 
+import com.shumamall.agent.config.AgentPromptProvider;
+import com.shumamall.agent.config.AgentRuntimeProperties;
 import com.shumamall.agent.skill.skills.ShoppingGuideSkill;
 import com.shumamall.agent.skill.skills.TradeSkill;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,9 +20,12 @@ class SkillSelectorTest {
 
     @BeforeEach
     void setUp() {
-        SkillRegistry registry = new SkillRegistry(java.util.List.of(new ShoppingGuideSkill(), new TradeSkill()));
+        AgentPromptProvider promptProvider = new AgentPromptProvider(new AgentRuntimeProperties());
+        SkillRegistry registry = new SkillRegistry(java.util.List.of(
+                new ShoppingGuideSkill(promptProvider),
+                new TradeSkill(promptProvider)));
         ChatClient chatClient = mock(ChatClient.class);
-        selector = new SkillSelector(registry, chatClient, false);
+        selector = new SkillSelector(registry, chatClient, promptProvider, false);
     }
 
     @Test

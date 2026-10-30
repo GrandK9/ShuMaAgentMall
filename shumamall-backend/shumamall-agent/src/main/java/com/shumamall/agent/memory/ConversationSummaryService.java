@@ -1,5 +1,6 @@
 package com.shumamall.agent.memory;
 
+import com.shumamall.agent.config.AgentPromptProvider;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
@@ -18,11 +19,14 @@ import java.util.List;
 public class ConversationSummaryService {
 
     private final ChatClient summaryChatClient;
+    private final AgentPromptProvider promptProvider;
     private final boolean mockLlm;
 
     public ConversationSummaryService(@Qualifier("summaryChatClient") ChatClient summaryChatClient,
-                                        @Value("${shumamall.agent.mock-llm:false}") boolean mockLlm) {
+                                      AgentPromptProvider promptProvider,
+                                      @Value("${shumamall.agent.mock-llm:false}") boolean mockLlm) {
         this.summaryChatClient = summaryChatClient;
+        this.promptProvider = promptProvider;
         this.mockLlm = mockLlm;
     }
 
@@ -41,17 +45,7 @@ public class ConversationSummaryService {
         String prior = StringUtils.hasText(existingSummary) ? existingSummary : "（无）";
         try {
             String merged = summaryChatClient.prompt()
-                    .user("""
-                            你是会话摘要维护器。将「已有摘要」与「新片段」合并成一份新的完整摘要，只输出摘要正文，不要标题、不要 JSON。
-                            必须保留：用户目标、提到的商品名、购物车/订单号及状态、待用户确认的操作、约束与偏好。
-                            没有的信息写「无」，禁止编造。
-
-                            【已有摘要】
-                            %s
-
-                            【新片段】
-                            %s
-                            """.formatted(prior, fragment))
+                    .user(promptProvider.summaryUserTemplate(prior, fragment))
                     .call()
                     .content();
             return merged == null ? prior : merged.strip();

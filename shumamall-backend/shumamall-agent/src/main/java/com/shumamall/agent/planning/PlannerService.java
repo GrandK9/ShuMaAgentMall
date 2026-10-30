@@ -1,5 +1,7 @@
 package com.shumamall.agent.planning;
 
+import com.shumamall.agent.config.AgentPromptProvider;
+import com.shumamall.agent.config.AgentRuntimeProperties;
 import com.shumamall.agent.skill.AgentSkill;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -23,17 +25,20 @@ public class PlannerService {
 
     private final ChatClient chatClient;
     private final ToolCatalog toolCatalog;
+    private final AgentPromptProvider promptProvider;
+    private final AgentRuntimeProperties runtimeProperties;
     private final boolean mockLlm;
-    private final int maxSteps;
 
     public PlannerService(ChatClient chatClient,
                           ToolCatalog toolCatalog,
-                          @Value("${shumamall.agent.mock-llm:false}") boolean mockLlm,
-                          @Value("${shumamall.agent.planning.max-steps:15}") int maxSteps) {
+                          AgentPromptProvider promptProvider,
+                          AgentRuntimeProperties runtimeProperties,
+                          @Value("${shumamall.agent.mock-llm:false}") boolean mockLlm) {
         this.chatClient = chatClient;
         this.toolCatalog = toolCatalog;
+        this.promptProvider = promptProvider;
+        this.runtimeProperties = runtimeProperties;
         this.mockLlm = mockLlm;
-        this.maxSteps = maxSteps;
     }
 
     /**
@@ -54,32 +59,12 @@ public class PlannerService {
 
     private AgentPlan llmPlan(String userMessage, AgentSkill skill, String conversationContext) {
         BeanOutputConverter<AgentPlan> converter = new BeanOutputConverter<>(AgentPlan.class);
-        String prompt = """
-                你是任务规划器。根据用户消息与当前技能边界，选择可用工具生成一份顺序执行的计划，只输出 JSON。
-                
-                当前技能：%s
-                可用工具（toolName 必须取自这里，params 的键必须与参数 Schema 一致）：
-                %s
-                输出格式：
-                {"goal": "一句话目标", "steps": [
-                  {"stepId": "step-1", "description": "做什么", "toolName": "工具名", "params": {"参数名": 值}},
-                  ...
-                ]}
-                规则：
-                - 步骤最多 %d 步，优先用最少步骤完成目标
-                - 下单前需要地址时，先规划 getAddressList 查询地址
-                - 用户给出 ORD 订单号时用 getOrderByOrderNo；查列表用 listOrders，需要更多历史订单时递增 page
-                - 不要假设 listOrders 只有一页，看返回的 total 与 page 决定是否继续查下一页
-                - createOrder / addToCart 的 productKeyword 必须填可检索的具体商品名（如 TestPhone、MacBook Air M3），禁止填「这几款」「上面商品」等指代词
-                - 用户当前句未点名商品时，从会话上下文中解析导购刚推荐过的商品名，每个商品单独一步 addToCart / createOrder
-                - 工具参数中的数字 ID（productId/skuId/addressId）如果用户没有明确给出，一律省略，工具会自动解析
-                - 只返回 JSON，不要任何解释
-                %s
-                %s
-                用户消息：%s""".formatted(
+        int maxSteps = runtimeProperties.getPlanning().getMaxSteps();
+        String prompt = promptProvider.plannerUserTemplate(
                 skill.getSkillId(),
                 toolCatalog.buildToolingPrompt(),
-                maxSteps,
+                promptProvider.plannerOutputFormatExample(),
+                promptProvider.plannerRules(maxSteps),
                 converter.getFormat(),
                 formatContextBlock(conversationContext),
                 userMessage);
@@ -134,7 +119,7 @@ public class PlannerService {
                 continue;
             }
             validSteps.add(step);
-            if (validSteps.size() >= maxSteps) {
+            if (validSteps.size() >= runtimeProperties.getPlanning().getMaxSteps()) {
                 break;
             }
         }
