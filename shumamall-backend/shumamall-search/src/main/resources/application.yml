@@ -31,7 +31,7 @@ logging:
 
 shumamall:
   search:
-    # ES 商品索引名
+    # ES 商品索引别名。物理索引为 shumamall_product_search_v{时间戳}，重建完成后切换别名
     index: shumamall_product_search
     # 全量灌库每批写入条数
     index-batch-size: 100

@@ -16,6 +16,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.redisson.api.RedissonClient;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -48,6 +49,12 @@ class ProductIndexWriterTest {
     @Mock
     private ElasticsearchClient esClient;
 
+    @Mock
+    private ProductIndexService indexService;
+
+    @Mock
+    private RedissonClient redissonClient;
+
     private ProductEmbeddingService embeddingService;
     private ProductIndexWriter writer;
 
@@ -55,7 +62,8 @@ class ProductIndexWriterTest {
     void setUp() {
         // mock-llm=true：Embedding 服务退化为确定性伪向量，单测无需真实模型
         embeddingService = new ProductEmbeddingService(null, true, 4, "");
-        writer = new ProductIndexWriter(productFeignClient, embeddingService, esClient, 100);
+        writer = new ProductIndexWriter(productFeignClient, embeddingService, esClient,
+                indexService, redissonClient, 100);
     }
 
     private ProductItemDTO item(long id, String name) {
@@ -102,7 +110,8 @@ class ProductIndexWriterTest {
     @Test
     void indexAllProducts_数据量超batchSize时_分批bulk写入() throws Exception {
         // batchSize=2，3 条数据应拆成 2+1 两个 bulk 请求
-        writer = new ProductIndexWriter(productFeignClient, embeddingService, esClient, 2);
+        writer = new ProductIndexWriter(productFeignClient, embeddingService, esClient,
+                indexService, redissonClient, 2);
         when(productFeignClient.list(eq(1), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(R.ok(new PageResult<>(1, 100, 3, List.of(item(1, "小米14"), item(2, "iPhone15"), item(3, "华为Mate60")))));
 

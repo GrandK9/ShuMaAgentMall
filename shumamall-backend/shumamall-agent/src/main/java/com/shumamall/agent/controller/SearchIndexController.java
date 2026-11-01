@@ -77,12 +77,13 @@ public class SearchIndexController {
             throw new BusinessException(ResultCode.CONFLICT, "索引正在重建");
         }
         try {
-            boolean created = indexService.createIndex(recreate);
-            int written = indexWriter.indexAllProducts();
+            int written = indexWriter.rebuildIndex();
             Map<String, Object> result = new LinkedHashMap<>();
-            result.put("indexCreated", created);
+            result.put("alias", ProductIndexService.PRODUCT_INDEX);
+            result.put("indices", indexService.aliasTargets());
             result.put("documentCount", written);
-            log.info("索引重建完成: created={}, written={}", created, written);
+            result.put("recreateIgnored", recreate);
+            log.info("索引重建完成: indices={}, written={}", result.get("indices"), written);
             return R.ok(result);
         } finally {
             release(lock);

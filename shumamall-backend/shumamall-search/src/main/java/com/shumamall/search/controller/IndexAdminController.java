@@ -17,7 +17,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -41,21 +42,26 @@ public class IndexAdminController {
     private final RedissonClient redissonClient;
 
     /**
-     * 全量重建商品索引（删除 → 建 mapping → 拉取商品 → 批量写入）。
+     * 全量重建商品索引：新建物理索引灌库，完成后切换别名。
      *
-     * @return 实际写入的商品数量
+     * @return 别名、当前物理索引、写入条数
      */
-    @Operation(summary = "全量重建商品索引（删除 → 建 mapping → 拉取商品 → 批量写入）")
+    @Operation(summary = "全量重建商品索引（新物理索引灌库后切换别名）")
     @PostMapping("/rebuild")
-    public R<Integer> rebuild() {
+    public R<Map<String, Object>> rebuild() {
         RLock lock = redissonClient.getLock(REBUILD_LOCK);
         if (!acquire(lock)) {
             throw new BusinessException(ResultCode.CONFLICT, "索引正在重建");
         }
         try {
             int written = productIndexWriter.rebuildIndex();
-            log.info("管理端触发索引重建完成: written={}", written);
-            return R.ok(written);
+            List<String> targets = productIndexService.aliasTargets();
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("alias", ProductIndexService.PRODUCT_INDEX);
+            result.put("indices", targets);
+            result.put("written", written);
+            log.info("管理端触发索引重建完成: indices={}, written={}", targets, written);
+            return R.ok(result);
         } finally {
             release(lock);
         }
@@ -79,13 +85,15 @@ public class IndexAdminController {
      *
      * @return 索引状态
      */
-    @Operation(summary = "索引状态（是否存在 + 文档数）")
+    @Operation(summary = "索引状态（别名、物理索引、文档数）")
     @GetMapping("/status")
     public R<Map<String, Object>> status() {
-        Map<String, Object> data = new HashMap<>();
-        boolean exists = productIndexService.createIndexIfAbsent() || indexExists();
-        data.put("index", ProductIndexService.PRODUCT_INDEX);
+        Map<String, Object> data = new LinkedHashMap<>();
+        boolean exists = productIndexService.nameExists();
+        List<String> targets = productIndexService.aliasTargets();
+        data.put("alias", ProductIndexService.PRODUCT_INDEX);
         data.put("exists", exists);
+        data.put("indices", targets);
         if (exists) {
             try {
                 long count = esClient.count(c -> c.index(ProductIndexService.PRODUCT_INDEX)).count();
@@ -96,15 +104,5 @@ public class IndexAdminController {
             }
         }
         return R.ok(data);
-    }
-
-    private boolean indexExists() {
-        try {
-            return esClient.indices()
-                    .exists(e -> e.index(ProductIndexService.PRODUCT_INDEX))
-                    .value();
-        } catch (Exception e) {
-            return false;
-        }
     }
 }

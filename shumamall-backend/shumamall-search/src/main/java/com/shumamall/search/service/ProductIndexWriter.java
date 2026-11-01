@@ -2,11 +2,15 @@ package com.shumamall.search.service;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.ElasticsearchException;
+import co.elastic.clients.elasticsearch._types.VersionType;
 import co.elastic.clients.elasticsearch.core.BulkRequest;
 import co.elastic.clients.elasticsearch.core.BulkResponse;
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
+import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
+import com.shumamall.common.exception.BusinessException;
 import com.shumamall.common.result.PageResult;
 import com.shumamall.common.result.R;
+import com.shumamall.common.result.ResultCode;
 import com.shumamall.search.document.ProductDoc;
 import com.shumamall.search.dto.BrandDTO;
 import com.shumamall.search.dto.CategoryDTO;
@@ -14,8 +18,11 @@ import com.shumamall.search.dto.ProductDTO;
 import com.shumamall.search.feign.BrandFeignClient;
 import com.shumamall.search.feign.CategoryFeignClient;
 import com.shumamall.search.feign.ProductFeignClient;
+import com.shumamall.search.index.IndexExternalVersion;
 import com.shumamall.search.index.ProductIndexService;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RBucket;
+import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -27,16 +34,20 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 商品索引灌库服务（全量重建 + 单文档同步）。
+ * 商品索引灌库（别名切换的全量重建 + 单文档增量）。
  * <p>
- * 全量重建：删除索引 → 重建 mapping → 拉取分类/品牌映射 → 每拉一页就 bulk 写入。
- * 增量同步（RabbitMQ 消费）复用 {@link #syncDoc(ProductDTO)} / {@link #deleteDoc(Long)}。
+ * 全量重建写到新的物理索引，灌完再把别名切过去。重建期间增量同时写别名和新物理索引，
+ * 并用外部版本号避免旧页覆盖更新的增量。
  */
 @Slf4j
 @Service
 public class ProductIndexWriter {
 
+    /** 重建进行中时，值为正在灌库的物理索引名。增量据此双写。 */
+    static final String REBUILD_TARGET_KEY = "search:index:rebuild:target";
+
     private static final int DEFAULT_PAGE_SIZE = 100;
+    private static final String VERSION_CONFLICT = "version_conflict_engine_exception";
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
 
     private final ProductFeignClient productFeignClient;
@@ -44,6 +55,7 @@ public class ProductIndexWriter {
     private final BrandFeignClient brandFeignClient;
     private final ElasticsearchClient esClient;
     private final ProductIndexService indexService;
+    private final RedissonClient redissonClient;
     private final int batchSize;
 
     public ProductIndexWriter(ProductFeignClient productFeignClient,
@@ -51,49 +63,62 @@ public class ProductIndexWriter {
                               BrandFeignClient brandFeignClient,
                               ElasticsearchClient esClient,
                               ProductIndexService indexService,
+                              RedissonClient redissonClient,
                               @Value("${shumamall.search.index-batch-size:100}") int batchSize) {
         this.productFeignClient = productFeignClient;
         this.categoryFeignClient = categoryFeignClient;
         this.brandFeignClient = brandFeignClient;
         this.esClient = esClient;
         this.indexService = indexService;
+        this.redissonClient = redissonClient;
         this.batchSize = batchSize <= 0 ? DEFAULT_PAGE_SIZE : batchSize;
     }
 
     /**
-     * 全量重建索引。
+     * 全量重建：新物理索引灌库，成功后切换别名。失败时删除半成品，别名保持原指向。
      *
-     * @return 实际写入的商品数量
+     * @return 实际接受的写入条数（含因版本更旧被拒绝的条数）
      */
     public int rebuildIndex() {
-        // 先删除重建，保证 mapping 与当前代码一致
-        indexService.deleteIndex();
-        if (!indexService.createIndexIfAbsent()) {
-            log.error("重建索引失败：索引创建未成功，中止灌库");
-            return 0;
+        String physical = indexService.newPhysicalName();
+        if (!indexService.createPhysicalIndex(physical, ProductIndexService.REFRESH_BULK)) {
+            throw new BusinessException(ResultCode.SERVER_ERROR, "物理索引创建失败");
         }
-        int written = writeAllProducts();
-        log.info("灌库完成: written={}", written);
-        return written;
+        rebuildTarget().set(physical);
+        try {
+            int written = writeAllProducts(physical);
+            indexService.putRefreshInterval(physical, ProductIndexService.REFRESH_NORMAL);
+            indexService.refresh(physical);
+            indexService.promote(physical);
+            log.info("灌库完成并已切换别名: index={}, written={}", physical, written);
+            return written;
+        } catch (Exception e) {
+            indexService.deletePhysical(physical);
+            log.error("全量重建失败，别名未切换: index={}, err={}", physical, e.getMessage());
+            if (e instanceof BusinessException businessException) {
+                throw businessException;
+            }
+            throw new BusinessException(ResultCode.SERVER_ERROR, "全量重建失败");
+        } finally {
+            rebuildTarget().delete();
+        }
     }
 
     /**
-     * 分页拉取商品，每拿到一页就写入 ES，不把全量文档留在内存里。
-     *
-     * @return 实际写入条数
+     * 分页拉取商品，每拿到一页就按该页的拉取时刻写入目标索引。
      */
-    private int writeAllProducts() {
+    private int writeAllProducts(String target) {
         Map<Long, String> categoryNames = loadCategoryNames();
         Map<Long, String> brandNames = loadBrandNames();
         int written = 0;
         int total = 0;
         int page = 1;
         while (true) {
+            long fetchedAt = System.currentTimeMillis();
             R<PageResult<ProductDTO>> resp = productFeignClient.list(
                     page, DEFAULT_PAGE_SIZE, null, null, null, null, null, null, null, null, null);
             if (!resp.isSuccess() || resp.getData() == null) {
-                log.warn("分页拉取失败，终止灌库: page={}, written={}", page, written);
-                break;
+                throw new BusinessException(ResultCode.SERVER_ERROR, "分页拉取商品失败，已中止重建");
             }
             PageResult<ProductDTO> pageResult = resp.getData();
             List<ProductDTO> records = pageResult.getRecords();
@@ -103,7 +128,7 @@ public class ProductIndexWriter {
             List<ProductDoc> pageDocs = records.stream()
                     .map(item -> toDoc(item, categoryNames, brandNames))
                     .toList();
-            written += bulkWrite(pageDocs);
+            written += bulkWrite(target, pageDocs, IndexExternalVersion.snapshot(fetchedAt));
             total += pageDocs.size();
             if (page >= pageResult.getPages() || records.size() < DEFAULT_PAGE_SIZE) {
                 break;
@@ -111,15 +136,13 @@ public class ProductIndexWriter {
             page++;
         }
         if (total == 0) {
-            log.warn("灌库未拉取到任何商品，跳过写入");
+            log.warn("灌库未拉取到任何商品");
         }
         return written;
     }
 
     /**
-     * 同步单个商品（增量同步：新增/更新）。
-     * <p>
-     * 商品已下架或不存在时从索引移除，保证前台只搜得到上架商品。
+     * 同步单个商品（增量）。重建进行中时同时写入别名和正在灌库的物理索引。
      */
     public void syncDoc(ProductDTO dto) throws IOException {
         if (dto == null || dto.getId() == null) {
@@ -130,34 +153,72 @@ public class ProductIndexWriter {
             return;
         }
         ProductDoc doc = toDoc(dto, loadCategoryNames(), loadBrandNames());
-        // 不吞掉 ES 异常：写索引失败必须让消费端感知，否则消息会被 ack 而索引永久缺失，
-        // 造成「数据库有、索引没有」的静默不一致。异常向上抛，由消费端重试或转死信队列。
-        esClient.index(i -> i
-                .index(ProductIndexService.PRODUCT_INDEX)
-                .id(String.valueOf(doc.getId()))
-                .document(doc));
+        long version = IndexExternalVersion.live(System.currentTimeMillis());
+        indexDoc(ProductIndexService.PRODUCT_INDEX, doc, version);
+        String target = currentRebuildTarget();
+        if (target != null) {
+            indexDoc(target, doc, version);
+        }
         log.debug("商品索引同步完成: id={}", doc.getId());
     }
 
     /**
-     * 删除单个商品索引文档。
-     * <p>
-     * 文档本就不存在时 ES 返回 404，此时删除视为成功（删除天然幂等）；
-     * 其余失败（集群不可用等）必须抛出，交由消费端重试/转死信。
+     * 删除单个商品索引文档。文档不存在或版本更旧都视为删除已达成。
      */
     public void deleteDoc(Long productId) throws IOException {
+        long version = IndexExternalVersion.live(System.currentTimeMillis());
+        deleteFrom(ProductIndexService.PRODUCT_INDEX, productId, version);
+        String target = currentRebuildTarget();
+        if (target != null) {
+            deleteFrom(target, productId, version);
+        }
+    }
+
+    private void indexDoc(String index, ProductDoc doc, long version) throws IOException {
         try {
-            esClient.delete(d -> d
-                    .index(ProductIndexService.PRODUCT_INDEX)
-                    .id(String.valueOf(productId)));
-            log.debug("商品索引文档已删除: id={}", productId);
+            esClient.index(i -> i
+                    .index(index)
+                    .id(String.valueOf(doc.getId()))
+                    .document(doc)
+                    .version(version)
+                    .versionType(VersionType.External));
         } catch (ElasticsearchException e) {
-            if (e.response() != null && e.response().status() == 404) {
-                log.debug("商品索引文档不存在，无需删除: id={}", productId);
+            if (isConflict(e)) {
+                log.debug("版本较旧，跳过写入: index={}, id={}", index, doc.getId());
                 return;
             }
             throw e;
         }
+    }
+
+    private void deleteFrom(String index, Long productId, long version) throws IOException {
+        try {
+            esClient.delete(d -> d
+                    .index(index)
+                    .id(String.valueOf(productId))
+                    .version(version)
+                    .versionType(VersionType.External));
+            log.debug("商品索引文档已删除: index={}, id={}", index, productId);
+        } catch (ElasticsearchException e) {
+            if (e.response() != null && (e.response().status() == 404 || isConflict(e))) {
+                log.debug("商品索引文档无需删除: index={}, id={}, status={}",
+                        index, productId, e.response().status());
+                return;
+            }
+            throw e;
+        }
+    }
+
+    private String currentRebuildTarget() {
+        String target = rebuildTarget().get();
+        if (target == null || target.isBlank() || target.equals(ProductIndexService.PRODUCT_INDEX)) {
+            return null;
+        }
+        return target;
+    }
+
+    private RBucket<String> rebuildTarget() {
+        return redissonClient.getBucket(REBUILD_TARGET_KEY);
     }
 
     /**
@@ -242,34 +303,48 @@ public class ProductIndexWriter {
     }
 
     /**
-     * 分批 bulk 写入 ES，返回成功写入条数。
+     * 分批 bulk 写入目标索引，返回被接受的条数。版本冲突视为旧数据被拒绝，不算失败。
      */
-    private int bulkWrite(List<ProductDoc> docs) {
+    private int bulkWrite(String target, List<ProductDoc> docs, long version) {
         int written = 0;
         for (int i = 0; i < docs.size(); i += batchSize) {
             List<ProductDoc> batch = docs.subList(i, Math.min(i + batchSize, docs.size()));
-            written += writeBatch(batch);
+            written += writeBatch(target, batch, version);
         }
         return written;
     }
 
-    private int writeBatch(List<ProductDoc> batch) {
+    private int writeBatch(String target, List<ProductDoc> batch, long version) {
         List<BulkOperation> operations = batch.stream()
                 .map(doc -> BulkOperation.of(o -> o.index(idx -> idx
-                        .index(ProductIndexService.PRODUCT_INDEX)
+                        .index(target)
                         .id(String.valueOf(doc.getId()))
-                        .document(doc))))
+                        .document(doc)
+                        .version(version)
+                        .versionType(VersionType.External))))
                 .toList();
         BulkRequest request = BulkRequest.of(b -> b.operations(operations));
         try {
             BulkResponse resp = esClient.bulk(request);
-            if (resp.errors()) {
-                log.warn("批量写入存在失败项: batchSize={}", batch.size());
+            int accepted = 0;
+            for (BulkResponseItem item : resp.items()) {
+                if (item.error() == null || VERSION_CONFLICT.equals(item.error().type())) {
+                    accepted++;
+                    continue;
+                }
+                log.warn("批量写入失败: index={}, id={}, type={}", target, item.id(), item.error().type());
+                throw new BusinessException(ResultCode.SERVER_ERROR, "批量写入存在失败项");
             }
-            return resp.items().size();
+            return accepted;
+        } catch (BusinessException e) {
+            throw e;
         } catch (Exception e) {
-            log.error("批量写入 ES 失败: batchSize={}, err={}", batch.size(), e.getMessage());
-            return 0;
+            log.error("批量写入 ES 失败: index={}, batchSize={}, err={}", target, batch.size(), e.getMessage());
+            throw new BusinessException(ResultCode.SERVER_ERROR, "批量写入 ES 失败");
         }
+    }
+
+    private static boolean isConflict(ElasticsearchException e) {
+        return e.response() != null && e.response().status() == 409;
     }
 }
