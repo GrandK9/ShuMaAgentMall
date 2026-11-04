@@ -19,6 +19,9 @@ import type {
   ProductPageQuery,
   ProductSearchItem,
   ProductSearchQuery,
+  SeckillActivity,
+  SeckillGrabDTO,
+  SeckillResult,
   ToolResult,
   UserInfo,
   VideoPlayInfo,
@@ -37,6 +40,7 @@ const CART_BASE = '/api/v1/cart';
 const ORDER_BASE = '/api/v1/orders';
 const PAYMENT_BASE = '/api/v1/payment';
 const ADDRESS_BASE = '/api/v1/user/address';
+const SECKILL_BASE = '/api/v1/seckill';
 const VIDEO_BASE = '/api/v1/video';
 
 /** 从 localStorage 读取登录 token（登录成功后由 App.vue 写入） */
@@ -70,7 +74,20 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
     }
     Object.assign(headers, await buildSignHeaders(method, url, rawBody, secret));
   }
-  const res = await fetch(url, { ...init, headers });
+  const controller = new AbortController();
+  const timeoutMs = 25_000;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, headers, signal: controller.signal });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error('请求超时，请确认订单服务（8084）与商品服务（8083）已启动');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
   // 先解析响应体再判断状态：后端所有失败响应（含 Filter 层的 401/403）都返回统一的 R 结构，
   // 只有先读 body 才能拿到真实失败原因（如「无效的认证令牌」）。
   // 解析失败（如网关/代理直接返回 HTML）时回退到 HTTP 状态文本。
@@ -303,6 +320,24 @@ export function updateUserInfo(params: { phone?: string; email?: string; nicknam
     if (v !== undefined && v !== null) query.set(k, String(v));
   });
   return request<UserInfo>(`${USER_BASE}/info?${query.toString()}`, { method: 'PUT' });
+}
+
+/* ---------------- 秒杀（order 8084） ---------------- */
+
+export function listSeckillActivities(): Promise<SeckillActivity[]> {
+  return request<SeckillActivity[]>(`${SECKILL_BASE}/activities`);
+}
+
+export function submitSeckill(dto: SeckillGrabDTO): Promise<SeckillResult> {
+  return request<SeckillResult>(`${SECKILL_BASE}/orders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify(dto),
+  });
+}
+
+export function getSeckillResult(requestId: string): Promise<SeckillResult> {
+  return request<SeckillResult>(`${SECKILL_BASE}/orders/${encodeURIComponent(requestId)}`);
 }
 
 /* ---------------- 地址（user 8082） ---------------- */

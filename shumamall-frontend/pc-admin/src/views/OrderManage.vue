@@ -90,6 +90,7 @@ onMounted(() => {
   <div class="manage-page">
     <div class="page-header">
       <h2>订单管理</h2>
+      <router-link to="/seckill"><el-button v-permission="'order:view'">秒杀活动</el-button></router-link>
     </div>
 
     <el-card shadow="never" class="filter-bar">

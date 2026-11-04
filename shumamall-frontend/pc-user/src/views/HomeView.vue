@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { addCart, getCategoryTree, getHotComments, getProductPage, searchProducts } from '../api';
@@ -23,6 +23,67 @@ const searchMode = ref(false);
 const hotProducts = ref<Product[]>([]);
 /** 热点板块：全站热门评论 Top 8 */
 const hotComments = ref<Comment[]>([]);
+
+/** 首屏主视觉：销量榜首商品（hero-object 方向） */
+const heroProduct = computed(() => hotProducts.value[0] ?? null);
+
+/** 启用动效层（无 JS 时不隐藏文案） */
+const homeMotionEnabled = ref(false);
+/** 榜首 hero 入场（数据到位后再播，避免空白闪烁） */
+const heroMotionPlay = ref(false);
+let sectionRevealObserver: IntersectionObserver | null = null;
+let productTileObserver: IntersectionObserver | null = null;
+
+function bindSectionReveal(): void {
+  sectionRevealObserver?.disconnect();
+  sectionRevealObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('is-revealed');
+          sectionRevealObserver?.unobserve(entry.target);
+        }
+      }
+    },
+    { threshold: 0.1, rootMargin: '0px 0px -6% 0px' }
+  );
+  document.querySelectorAll('.home-page .motion-section').forEach((el) => {
+    sectionRevealObserver?.observe(el);
+  });
+}
+
+/** 商品列表：每张卡片进入视口时再上滑（ref 挂载时注册，避免 v-for 渲染晚于 querySelector） */
+function ensureProductTileObserver(): IntersectionObserver | null {
+  if (!homeMotionEnabled.value) return null;
+  if (!productTileObserver) {
+    productTileObserver = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const el = entry.target as HTMLElement;
+          productTileObserver?.unobserve(el);
+          requestAnimationFrame(() => {
+            el.classList.add('is-in-view');
+          });
+        }
+      },
+      { threshold: 0.06, rootMargin: '0px 0px -2% 0px' }
+    );
+  }
+  return productTileObserver;
+}
+
+function setProductTileRef(el: unknown): void {
+  if (!(el instanceof HTMLElement) || !el.classList.contains('scroll-rise')) return;
+  if (!homeMotionEnabled.value) {
+    el.classList.add('is-in-view');
+    return;
+  }
+  const observer = ensureProductTileObserver();
+  if (!observer) return;
+  el.classList.remove('is-in-view');
+  observer.observe(el);
+}
 
 const sortMap: Record<typeof sortBy.value, { sortBy?: string; sortOrder?: string }> = {
   default: {},
@@ -180,16 +241,53 @@ function onBuyNow(p: Product): void {
   router.push('/checkout');
 }
 
+watch(
+  heroProduct,
+  (p) => {
+    heroMotionPlay.value = false;
+    if (!p) return;
+    void nextTick(() => {
+      requestAnimationFrame(() => {
+        heroMotionPlay.value = true;
+      });
+    });
+  },
+  { immediate: true }
+);
+
+watch(
+  () => [hotProducts.value.length, hotComments.value.length, products.value.length, searchMode.value],
+  () => {
+    if (!homeMotionEnabled.value) return;
+    void nextTick(bindSectionReveal);
+  }
+);
+
+watch(
+  () => products.value.map((p) => p.id).join(','),
+  () => {
+    productTileObserver?.disconnect();
+    productTileObserver = null;
+  }
+);
+
 onMounted(() => {
+  homeMotionEnabled.value = true;
+  void nextTick(bindSectionReveal);
   void loadCategories();
   void loadHotProducts();
   void loadHotComments();
   void load(1);
 });
+
+onUnmounted(() => {
+  sectionRevealObserver?.disconnect();
+  productTileObserver?.disconnect();
+});
 </script>
 
 <template>
-  <div class="home-page" v-loading="loading">
+  <div class="home-page" :class="{ 'home-motion': homeMotionEnabled }" v-loading="loading">
     <div class="search-bar">
       <el-input v-model="keyword" placeholder="搜索商品" clearable @keyup.enter="onSearch" style="width: 360px;" />
       <el-button type="primary" @click="onSearch">搜索</el-button>
@@ -205,28 +303,86 @@ onMounted(() => {
       全文检索「{{ keyword }}」命中 {{ total }} 件商品
     </div>
 
-    <!-- 热点板块：热门商品（销量 Top 8） -->
-    <section v-if="hotProducts.length" class="hot-section">
-      <div class="hot-title">热门商品</div>
-      <div class="hot-products">
-        <el-card v-for="(p, idx) in hotProducts" :key="p.id" shadow="hover" class="hot-card" @click="goDetail(p)">
-          <div class="hot-rank" :class="idx < 3 ? 'top' : ''">{{ idx + 1 }}</div>
-          <div class="hot-cover">
-            <img v-if="p.mainImage" :src="p.mainImage" :alt="p.name" />
+    <section
+      v-if="heroProduct && !searchMode"
+      :key="heroProduct.id"
+      class="catalog-hero"
+      :class="{
+        'catalog-hero--no-image': !heroProduct.mainImage,
+        'hero-motion--play': heroMotionPlay,
+      }"
+    >
+      <div
+        class="hero-media hero-shutter"
+        :class="{ 'hero-shutter--in': heroMotionPlay }"
+        aria-hidden="true"
+      >
+        <img
+          v-if="heroProduct.mainImage"
+          class="hero-bg-img"
+          :src="heroProduct.mainImage"
+          alt=""
+        />
+        <div v-else class="hero-bg-fallback" />
+        <div class="hero-scrim" />
+      </div>
+      <div class="hero-copy">
+        <h1 class="hero-title hero-rise">{{ heroProduct.name }}</h1>
+        <p class="hero-lead hero-rise hero-rise--1">
+          销量榜首 · 本周 {{ heroProduct.salesVolume ?? 0 }} 件 ·
+          <span class="amount">¥{{ heroProduct.price.toFixed(2) }}</span>
+        </p>
+        <el-button
+          class="hero-cta hero-rise hero-rise--2"
+          type="primary"
+          size="large"
+          @click="goDetail(heroProduct)"
+        >
+          查看这款
+        </el-button>
+      </div>
+    </section>
+
+    <section v-if="hotProducts.length > 1 && !searchMode" class="hot-section motion-section">
+      <h2 class="section-title motion-rise">热销榜</h2>
+      <div class="hot-rail">
+        <article
+          v-for="(p, idx) in hotProducts.slice(1)"
+          :key="p.id"
+          class="hot-tile"
+          :style="{ '--delay': `${100 + idx * 70}ms` }"
+          @click="goDetail(p)"
+        >
+          <span class="hot-rank motion-hot-part">{{ idx + 2 }}</span>
+          <div class="hot-cover motion-hot-part motion-hot-part--cover">
+            <img
+              v-if="p.mainImage"
+              class="hot-cover-img"
+              :src="p.mainImage"
+              :alt="p.name"
+              loading="lazy"
+            />
             <div v-else class="img-placeholder">暂无图片</div>
           </div>
-          <div class="hot-name">{{ p.name }}</div>
-          <div class="hot-price">¥{{ p.price.toFixed(2) }}</div>
-          <div class="hot-sales">销量 {{ p.salesVolume ?? 0 }}</div>
-        </el-card>
+          <p class="hot-name motion-hot-part motion-hot-part--name">{{ p.name }}</p>
+          <p class="hot-price amount motion-hot-part motion-hot-part--price">
+            ¥{{ p.price.toFixed(2) }}
+          </p>
+        </article>
       </div>
     </section>
 
     <!-- 热点板块：全站热门评论 Top 8 -->
-    <section v-if="hotComments.length" class="hot-section">
-      <div class="hot-title">热门评论</div>
+    <section v-if="hotComments.length" class="hot-section comments-section motion-section">
+      <h2 class="section-title motion-rise">买家在说</h2>
       <div class="hot-comments">
-        <div v-for="c in hotComments" :key="c.id" class="hot-comment" @click="goProductDetail(c.productId)">
+        <div
+          v-for="(c, idx) in hotComments"
+          :key="c.id"
+          class="hot-comment motion-rise"
+          :style="{ '--delay': `${120 + idx * 60}ms` }"
+          @click="goProductDetail(c.productId)"
+        >
           <span class="hot-comment-user">{{ c.username || `用户${c.userId ?? ''}` }}</span>
           <span class="hot-comment-content">{{ c.content }}</span>
           <span class="hot-comment-likes">赞 {{ c.likeCount ?? 0 }}</span>
@@ -235,7 +391,7 @@ onMounted(() => {
     </section>
 
     <div class="home-body">
-      <aside class="category-sidebar">
+      <aside class="category-sidebar" aria-label="商品分类">
         <div class="cat-item" :class="{ active: activeCategoryId === null }" @click="onCategoryClick(null)">全部分类</div>
         <div v-for="cat in categories" :key="cat.id">
           <div
@@ -257,29 +413,45 @@ onMounted(() => {
         </div>
       </aside>
 
-      <main class="product-grid">
+      <main class="catalog-main motion-section">
+        <h2 class="section-title catalog-heading motion-rise">{{ searchMode ? '搜索结果' : '全部商品' }}</h2>
         <el-empty
           v-if="!loading && products.length === 0"
           :description="searchMode ? '未找到相关商品' : '暂无商品'"
         />
-        <el-card v-for="p in products" :key="p.id" shadow="hover" class="product-card" @click="goDetail(p)">
-          <div class="product-cover">
-            <img v-if="p.mainImage" :src="p.mainImage" :alt="p.name" />
-            <div v-else class="img-placeholder">暂无图片</div>
-          </div>
-          <div class="product-info">
-            <div class="name">{{ p.name }}</div>
-            <div class="price">¥{{ p.price.toFixed(2) }}</div>
-            <div class="sales">销量 {{ p.salesVolume ?? 0 }}</div>
-          </div>
-          <div class="actions" @click.stop>
-            <template v-if="p.skuList && p.skuList.length">
-              <el-button size="small" @click="onAddCart(p)">加购</el-button>
-              <el-button size="small" type="primary" @click="onBuyNow(p)">立即购买</el-button>
-            </template>
-            <el-button v-else size="small" @click="goDetail(p)">查看详情</el-button>
-          </div>
-        </el-card>
+        <div v-else class="product-grid">
+          <article
+            v-for="(p, idx) in products"
+            :key="p.id"
+            :ref="setProductTileRef"
+            class="product-tile scroll-rise"
+            :style="{ '--delay': `${(idx % 4) * 70}ms` }"
+            @click="goDetail(p)"
+          >
+            <div class="product-cover">
+              <img v-if="p.mainImage" :src="p.mainImage" :alt="p.name" loading="lazy" />
+              <div v-else class="img-placeholder">暂无图片</div>
+            </div>
+            <div class="product-info">
+              <h3 class="name">{{ p.name }}</h3>
+              <p class="price amount">¥{{ p.price.toFixed(2) }}</p>
+              <p class="sales">销量 {{ p.salesVolume ?? 0 }}</p>
+            </div>
+            <div
+              class="tile-actions"
+              :class="{ 'tile-actions--single': !(p.skuList && p.skuList.length) }"
+              @click.stop
+            >
+              <template v-if="p.skuList && p.skuList.length">
+                <el-button class="tile-btn tile-btn-cart" size="small" @click="onAddCart(p)">加购</el-button>
+                <el-button class="tile-btn tile-btn-buy" size="small" type="primary" @click="onBuyNow(p)">
+                  购买
+                </el-button>
+              </template>
+              <el-button v-else class="tile-btn" size="small" @click="goDetail(p)">详情</el-button>
+            </div>
+          </article>
+        </div>
       </main>
     </div>
 
@@ -296,171 +468,416 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.home-page {
-  padding: 16px 24px;
-}
 .search-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 16px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface-inset);
+  border-radius: var(--radius-lg);
 }
 .search-tip {
-  margin: -4px 0 12px;
-  color: #909399;
-  font-size: 13px;
+  margin: calc(-1 * var(--space-2)) 0 var(--space-3);
+  color: var(--muted);
+  font-size: var(--text-sm);
 }
-/* 热点板块 */
+
+.catalog-hero {
+  position: relative;
+  margin-bottom: var(--space-6);
+  min-height: min(56vh, 440px);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+  padding: var(--space-6) var(--space-8);
+}
+
+.hero-media {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.hero-bg-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  transform-origin: center center;
+}
+
+.hero-bg-fallback {
+  width: 100%;
+  height: 100%;
+  background: var(--surface-inset);
+}
+
+.hero-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    102deg,
+    color-mix(in srgb, var(--ink) 78%, transparent) 0%,
+    color-mix(in srgb, var(--ink) 42%, transparent) 38%,
+    color-mix(in srgb, var(--ink) 8%, transparent) 62%,
+    transparent 100%
+  );
+}
+
+.catalog-hero--no-image .hero-scrim {
+  background: color-mix(in srgb, var(--surface-card) 18%, transparent);
+}
+
+.hero-copy {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: min(28rem, 92%);
+  padding-bottom: var(--space-2);
+}
+
+.hero-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  color: var(--surface-card);
+  max-width: 16ch;
+  text-wrap: balance;
+}
+
+.catalog-hero--no-image .hero-title {
+  color: var(--ink);
+}
+
+.hero-lead {
+  margin: var(--space-4) 0 var(--space-5);
+  font-size: var(--text-base);
+  color: color-mix(in srgb, var(--surface-card) 88%, transparent);
+  max-width: 36ch;
+}
+
+.catalog-hero--no-image .hero-lead {
+  color: var(--muted);
+}
+
+@keyframes home-rise {
+  from {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .hero-motion--play .hero-shutter {
+    clip-path: inset(0 0 100% 0);
+    transition: clip-path var(--t-open) cubic-bezier(0.76, 0, 0.24, 1);
+  }
+  .hero-motion--play .hero-shutter--in {
+    clip-path: inset(0);
+  }
+  .hero-motion--play .hero-shutter .hero-bg-img,
+  .hero-motion--play .hero-shutter .hero-bg-fallback {
+    transform: scale(1.1);
+    transition: transform calc(var(--t-open) + 200ms) var(--ease-soft);
+  }
+  .hero-motion--play .hero-shutter--in .hero-bg-img,
+  .hero-motion--play .hero-shutter--in .hero-bg-fallback {
+    transform: none;
+  }
+
+  .hero-motion--play .hero-rise {
+    opacity: 0;
+    transform: translateY(28px);
+    animation: home-rise var(--t-reveal) var(--ease-out) forwards;
+  }
+  .hero-motion--play .hero-rise--1 {
+    animation-delay: var(--stagger-line);
+  }
+  .hero-motion--play .hero-rise--2 {
+    animation-delay: calc(var(--stagger-line) * 2);
+  }
+
+  .hero-cta {
+    transition: transform var(--t-press) var(--ease-out);
+  }
+  .hero-cta:active {
+    transform: scale(0.97);
+  }
+
+  .home-motion .motion-section:not(.is-revealed) .motion-rise {
+    opacity: 0;
+    transform: translateY(22px);
+  }
+  .home-motion .motion-section.is-revealed .motion-rise {
+    animation: home-rise 720ms var(--ease-out) both;
+    animation-delay: var(--delay, 0ms);
+  }
+  .home-motion .motion-section.is-revealed .section-title.motion-rise {
+    animation-delay: 0ms;
+  }
+
+  .home-motion .product-tile.scroll-rise:not(.is-in-view) {
+    opacity: 0;
+    transform: translate3d(0, 32px, 0);
+  }
+  .home-motion .product-tile.scroll-rise.is-in-view {
+    animation: tile-scroll-rise 720ms var(--ease-out) both;
+    animation-delay: var(--delay, 0ms);
+  }
+
+  .home-motion .motion-section:not(.is-revealed) .motion-hot-part {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  .home-motion .motion-section.is-revealed .motion-hot-part {
+    animation: home-rise 680ms var(--ease-out) both;
+    animation-delay: var(--delay, 0ms);
+  }
+  .home-motion .motion-section.is-revealed .motion-hot-part--cover {
+    animation-name: hot-cover-in;
+    animation-duration: 760ms;
+  }
+  .home-motion .motion-section.is-revealed .motion-hot-part--name {
+    animation-delay: calc(var(--delay, 0ms) + var(--stagger-item));
+  }
+  .home-motion .motion-section.is-revealed .motion-hot-part--price {
+    animation-delay: calc(var(--delay, 0ms) + var(--stagger-item) + var(--stagger-line));
+  }
+}
+
+@keyframes tile-scroll-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 32px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes hot-cover-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(1.05);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .hot-section {
-  margin-bottom: 16px;
-  background: #fff;
-  border-radius: 8px;
-  padding: 16px;
+  margin-bottom: var(--space-6);
+  padding: var(--space-5) var(--space-5) var(--space-6);
+  background: var(--surface-raised);
+  border-radius: var(--radius-lg);
 }
-.hot-title {
-  font-size: 16px;
-  font-weight: bold;
-  color: #303133;
-  margin-bottom: 12px;
+.comments-section {
+  background: var(--surface-raised);
 }
-.hot-products {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 12px;
+.hot-rail {
+  display: flex;
+  gap: var(--space-4);
+  overflow-x: auto;
+  padding-bottom: var(--space-2);
+  scroll-snap-type: x mandatory;
 }
-.hot-card {
+.hot-tile {
+  flex: 0 0 176px;
+  scroll-snap-align: start;
   cursor: pointer;
   position: relative;
+  background: var(--surface-card);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.hot-tile:hover {
+  background: var(--surface-hover);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .hot-tile:hover .hot-cover {
+    transform: translateY(-3px);
+  }
+  .hot-tile:hover .hot-cover-img {
+    transform: scale(1.06);
+  }
+  .hot-tile:active .hot-cover {
+    transform: translateY(-1px);
+    transition-duration: var(--t-press);
+  }
+  .hot-tile:active .hot-cover-img {
+    transform: scale(1.03);
+    transition-duration: var(--t-press);
+  }
 }
 .hot-rank {
   position: absolute;
-  top: 8px;
-  left: 8px;
-  width: 20px;
-  height: 20px;
-  line-height: 20px;
-  text-align: center;
-  border-radius: 4px;
-  background: #909399;
-  color: #fff;
-  font-size: 12px;
+  top: var(--space-2);
+  left: var(--space-2);
   z-index: 1;
-}
-.hot-rank.top {
-  background: #f56c6c;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--muted);
+  padding: 2px 6px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-card) 88%, transparent);
 }
 .hot-cover {
-  height: 120px;
-  background: #f5f7fa;
+  aspect-ratio: 1;
+  width: 100%;
+  flex-shrink: 0;
+  background: var(--surface-inset);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  border-radius: calc(var(--radius-md) - 2px);
+  transition: transform var(--t-hover) var(--ease-out);
 }
-.hot-cover img {
+.hot-cover-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center;
+  transform-origin: center center;
+  transition: transform 520ms var(--ease-soft);
 }
 .hot-name {
-  margin-top: 8px;
-  font-size: 13px;
-  color: #303133;
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+  color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .hot-price {
-  color: #f56c6c;
-  font-weight: bold;
-  margin-top: 4px;
+  margin: 4px 0 0;
+  font-weight: 600;
+  color: var(--ink);
 }
-.hot-sales {
-  font-size: 12px;
-  color: #909399;
-  margin-top: 4px;
-}
+
 .hot-comments {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-2);
 }
 .hot-comment {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  background: #f8f9fb;
-  border-radius: 6px;
+  display: grid;
+  grid-template-columns: 100px 1fr auto;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--separator);
   cursor: pointer;
-  transition: background 0.2s;
 }
-.hot-comment:hover {
-  background: #ecf5ff;
+.hot-comment:last-child {
+  border-bottom: none;
 }
 .hot-comment-user {
-  flex-shrink: 0;
-  color: #409eff;
-  font-size: 13px;
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--ink);
 }
 .hot-comment-content {
-  flex: 1;
-  color: #303133;
-  font-size: 13px;
+  font-size: var(--text-sm);
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .hot-comment-likes {
-  flex-shrink: 0;
-  color: #909399;
-  font-size: 12px;
+  font-size: var(--text-xs);
+  color: var(--muted);
 }
+
 .home-body {
-  display: flex;
-  gap: 16px;
-  min-height: 400px;
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: var(--space-6);
+  align-items: start;
 }
 .category-sidebar {
-  width: 180px;
-  flex-shrink: 0;
-  background: #fff;
-  border-radius: 8px;
-  padding: 8px 0;
-  max-height: calc(100vh - 200px);
+  position: sticky;
+  top: 80px;
+  background: var(--surface-raised);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2) 0;
+  max-height: calc(100vh - 96px);
   overflow-y: auto;
 }
 .cat-item {
-  padding: 10px 16px;
+  padding: 12px var(--space-4);
   cursor: pointer;
-  font-size: 14px;
-  color: #606266;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  border-radius: var(--radius-md);
+  margin: 0 var(--space-2);
+  transition: color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
 }
-.cat-item:hover,
+.cat-item:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface) 80%, var(--surface-card));
+}
 .cat-item.active {
-  color: #409eff;
-  background: #ecf5ff;
+  color: var(--ink);
+  font-weight: 600;
+  background: var(--surface-card);
 }
 .cat-item.sub {
-  padding-left: 32px;
-  font-size: 13px;
+  padding-left: var(--space-8);
+  font-size: var(--text-xs);
+}
+
+.catalog-main {
+  min-width: 0;
+  background: var(--surface-raised);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+}
+.catalog-heading {
+  margin-bottom: var(--space-4);
 }
 .product-grid {
-  flex: 1;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-4);
 }
-.product-card {
+.product-tile {
   cursor: pointer;
+  background: var(--surface-card);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.product-tile:hover {
+  background: var(--surface-hover);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .product-tile:hover .product-cover img {
+    transform: scale(1.04);
+  }
 }
 .product-cover {
-  height: 160px;
-  background: #f5f7fa;
+  height: 168px;
+  background: var(--surface-inset);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -470,39 +887,101 @@ onMounted(() => {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transform-origin: center center;
+  transition: transform 520ms var(--ease-soft);
 }
 .img-placeholder {
-  color: #909399;
-  font-size: 14px;
+  color: var(--muted);
+  font-size: var(--text-sm);
 }
 .product-info {
-  padding: 12px 0;
+  padding: var(--space-3) var(--space-3) var(--space-4);
+  flex: 1;
 }
 .product-info .name {
-  font-size: 14px;
-  color: #303133;
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .product-info .price {
-  color: #f56c6c;
-  font-weight: bold;
-  margin-top: 6px;
+  margin: 6px 0 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--ink);
 }
 .product-info .sales {
-  font-size: 12px;
-  color: #909399;
-  margin-top: 4px;
+  margin: 4px 0 0;
+  font-size: var(--text-xs);
+  color: var(--muted);
 }
-.actions {
-  display: flex;
-  gap: 8px;
-  justify-content: center;
+.tile-actions {
+  margin-top: auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border-top: 1px solid var(--separator);
+}
+
+.tile-actions--single {
+  grid-template-columns: 1fr;
+}
+
+.tile-actions :deep(.el-button) {
+  width: 100%;
+  margin: 0;
+  font-weight: 600;
+  transition: transform var(--t-press) var(--ease-out);
+}
+.tile-actions :deep(.el-button:active) {
+  transform: scale(0.97);
+}
+
+.tile-actions :deep(.tile-btn-cart.el-button) {
+  --el-button-bg-color: var(--surface-card);
+  --el-button-border-color: color-mix(in srgb, var(--ink) 18%, transparent);
+  --el-button-text-color: var(--ink);
+  --el-button-hover-bg-color: var(--surface);
+  --el-button-hover-border-color: var(--accent);
+  --el-button-hover-text-color: var(--accent);
+}
+
+.tile-actions :deep(.tile-btn-buy.el-button--primary) {
+  --el-button-bg-color: var(--accent);
+  --el-button-border-color: var(--accent);
 }
 .pagination-bar {
   display: flex;
   justify-content: center;
-  margin-top: 24px;
+  margin-top: var(--space-6);
+}
+
+@media (max-width: 768px) {
+  .catalog-hero {
+    min-height: min(48vh, 360px);
+    padding: var(--space-5);
+    align-items: flex-end;
+  }
+  .hero-scrim {
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--ink) 15%, transparent) 0%,
+      color-mix(in srgb, var(--ink) 75%, transparent) 100%
+    );
+  }
+  .catalog-hero--no-image .hero-scrim {
+    background: linear-gradient(180deg, transparent 30%, color-mix(in srgb, var(--surface-card) 50%, transparent) 100%);
+  }
+  .home-body {
+    grid-template-columns: 1fr;
+  }
+  .category-sidebar {
+    position: static;
+    max-height: none;
+  }
 }
 </style>

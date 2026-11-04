@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import type { UploadRequestOptions } from 'element-plus';
 import {
   createProduct,
   deleteProduct,
@@ -9,6 +10,7 @@ import {
   updateProduct,
   updateProductStatus,
   updateProductStock,
+  uploadProductImage,
 } from '../api';
 import type { Product } from '../types';
 
@@ -28,11 +30,17 @@ const form = reactive<Partial<Product>>({
   id: undefined,
   name: '',
   subtitle: '',
+  mainImage: '',
   price: 0,
   stock: 100,
   status: 1,
   skuList: [{ skuCode: '', price: 0, stock: 100, specs: '{"spec":"默认规格"}' }],
 });
+
+const imageUploading = ref(false);
+
+const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp,image/gif';
 
 const stockVisible = ref(false);
 const stockTarget = ref<Product | null>(null);
@@ -66,6 +74,7 @@ function openCreate(): void {
     id: undefined,
     name: '',
     subtitle: '',
+    mainImage: '',
     price: 0,
     stock: 100,
     status: 1,
@@ -82,6 +91,7 @@ async function openEdit(p: Product): Promise<void> {
       id: data.id,
       name: data.name,
       subtitle: data.subtitle || '',
+      mainImage: data.mainImage || '',
       price: data.price,
       stock: data.stock ?? 0,
       status: data.status ?? 1,
@@ -112,6 +122,7 @@ async function save(): Promise<void> {
     brandId: form.brandId,
     name: form.name,
     subtitle: form.subtitle || undefined,
+    mainImage: form.mainImage || undefined,
     price: form.price,
     stock: form.stock,
     status: form.status,
@@ -174,6 +185,37 @@ async function saveStock(): Promise<void> {
   }
 }
 
+function beforeImageUpload(file: File): boolean {
+  if (!file.type.startsWith('image/')) {
+    ElMessage.warning('请选择图片文件');
+    return false;
+  }
+  if (file.size > IMAGE_MAX_BYTES) {
+    ElMessage.warning('图片不能超过 5MB');
+    return false;
+  }
+  return true;
+}
+
+async function onImageUpload(options: UploadRequestOptions): Promise<void> {
+  const raw = options.file as File;
+  imageUploading.value = true;
+  try {
+    const result = await uploadProductImage(raw);
+    form.mainImage = result.fileUrl;
+    options.onSuccess?.(result);
+    ElMessage.success('主图上传成功');
+  } catch (e) {
+    ElMessage.error(`上传失败：${(e as Error).message}`);
+  } finally {
+    imageUploading.value = false;
+  }
+}
+
+function clearMainImage(): void {
+  form.mainImage = '';
+}
+
 async function openDetail(p: Product): Promise<void> {
   try {
     detail.value = await getProductDetail(p.id);
@@ -209,6 +251,19 @@ onMounted(() => {
       <el-empty v-if="!loading && products.length === 0" description="暂无商品" />
       <el-table v-else :data="products">
         <el-table-column prop="id" label="ID" width="80" />
+        <el-table-column label="主图" width="72">
+          <template #default="{ row }">
+            <el-image
+              v-if="row.mainImage"
+              :src="row.mainImage"
+              :preview-src-list="[row.mainImage]"
+              fit="cover"
+              class="thumb"
+              preview-teleported
+            />
+            <span v-else class="no-thumb">—</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="name" label="商品名称" min-width="200" />
         <el-table-column label="价格" width="120">
           <template #default="{ row }">¥{{ Number(row.price).toFixed(2) }}</template>
@@ -255,6 +310,27 @@ onMounted(() => {
         <el-form-item label="副标题">
           <el-input v-model="form.subtitle" placeholder="如：A18 Pro 芯片 · 钛金属" />
         </el-form-item>
+        <el-form-item label="主图">
+          <div class="image-field">
+            <el-upload
+              class="main-image-uploader"
+              :show-file-list="false"
+              :accept="IMAGE_ACCEPT"
+              :disabled="imageUploading"
+              :before-upload="beforeImageUpload"
+              :http-request="onImageUpload"
+            >
+              <el-image v-if="form.mainImage" :src="form.mainImage" fit="cover" class="upload-preview" />
+              <div v-else class="upload-placeholder">
+                <span>{{ imageUploading ? '上传中…' : '点击上传' }}</span>
+              </div>
+            </el-upload>
+            <div class="image-actions">
+              <el-button v-if="form.mainImage" link type="danger" @click="clearMainImage">移除主图</el-button>
+              <p class="image-hint">JPG / PNG / WebP / GIF，≤ 5MB，存入 MinIO 公开桶</p>
+            </div>
+          </div>
+        </el-form-item>
         <el-form-item label="分类 ID">
           <el-input-number v-model="form.categoryId" :min="1" />
         </el-form-item>
@@ -299,6 +375,17 @@ onMounted(() => {
         <el-descriptions-item label="ID">{{ detail.id }}</el-descriptions-item>
         <el-descriptions-item label="名称">{{ detail.name }}</el-descriptions-item>
         <el-descriptions-item label="副标题">{{ detail.subtitle || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="主图">
+          <el-image
+            v-if="detail.mainImage"
+            :src="detail.mainImage"
+            :preview-src-list="[detail.mainImage]"
+            fit="contain"
+            class="detail-image"
+            preview-teleported
+          />
+          <span v-else>未设置</span>
+        </el-descriptions-item>
         <el-descriptions-item label="价格">¥{{ Number(detail.price).toFixed(2) }}</el-descriptions-item>
         <el-descriptions-item label="库存">{{ detail.stock }}</el-descriptions-item>
         <el-descriptions-item label="销量">{{ detail.salesVolume }}</el-descriptions-item>
@@ -338,5 +425,55 @@ onMounted(() => {
   margin: 0 0 12px;
   line-height: 1.9;
   color: #606266;
+}
+.thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #e6e6e6);
+}
+.no-thumb {
+  color: var(--muted, #909399);
+  font-size: 12px;
+}
+.image-field {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.main-image-uploader :deep(.el-upload) {
+  border: 1px dashed var(--border, #dcdfe6);
+  border-radius: 8px;
+  cursor: pointer;
+  overflow: hidden;
+  width: 120px;
+  height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ground, #f5f7fa);
+}
+.upload-preview {
+  width: 120px;
+  height: 120px;
+}
+.upload-placeholder {
+  font-size: 13px;
+  color: var(--muted, #909399);
+  text-align: center;
+  padding: 8px;
+}
+.image-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted, #909399);
+  line-height: 1.5;
+  max-width: 220px;
+}
+.detail-image {
+  max-width: 240px;
+  max-height: 160px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #e6e6e6);
 }
 </style>

@@ -233,6 +233,37 @@ export interface PayResponse {
   paidAt?: string;
 }
 
+/* ---------------- 秒杀（shumamall-order 8084） ---------------- */
+
+export interface SeckillActivity {
+  id: number;
+  name: string;
+  skuId: number;
+  productId: number;
+  seckillPrice: number;
+  totalStock: number;
+  perUserLimit?: number;
+  startTime: string;
+  endTime: string;
+  status: number;
+  statusLabel?: string;
+  remainingStock?: number | null;
+}
+
+export interface SeckillGrabDTO {
+  activityId: number;
+  addressId: number;
+  remark?: string;
+}
+
+export interface SeckillResult {
+  requestId: string;
+  status: number;
+  statusLabel?: string;
+  orderNo?: string;
+  message?: string;
+}
+
 /* ---------------- 地址（shumamall-user） ---------------- */
 
 export interface Address {

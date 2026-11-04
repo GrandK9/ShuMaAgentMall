@@ -4,6 +4,7 @@ import type {
   Brand,
   Category,
   CommentVO,
+  DictItem,
   Dashboard,
   LoginResp,
   MenuItem,
@@ -13,12 +14,15 @@ import type {
   Permission,
   Product,
   Role,
+  SeckillActivity,
+  SearchIndexRebuildResult,
   SearchIndexStatus,
   VideoCompleteResp,
   VideoInitResp,
   VideoMeta,
   VideoPlayInfo,
   VideoUploadSession,
+  UploadResult,
 } from './types';
 
 import { buildSignHeaders, isSignedRequest } from './sign';
@@ -37,9 +41,12 @@ const MENU_BASE = '/permission/menus';
 const MY_PERMISSION_BASE = '/permission/my-permissions';
 const AUDIT_BASE = '/api/v1/admin/audit';
 const COMMENT_BASE = '/api/v1/admin/comment';
+const DICT_BASE = '/api/v1/admin/dict';
+const SECKILL_ADMIN_BASE = '/api/v1/admin/seckill';
 const SEARCH_INDEX_BASE = '/api/v1/search/index';
 const ADMIN_VIDEO_BASE = '/api/v1/admin/video';
 const VIDEO_BASE = '/api/v1/video';
+const UPLOAD_BASE = '/api/v1/admin/upload';
 
 /** 从 localStorage 读取管理端 token */
 function adminToken(): string {
@@ -99,6 +106,25 @@ export function login(username: string, password: string): Promise<LoginResp> {
 
 export function getDashboard(): Promise<Dashboard> {
   return request<Dashboard>(DASHBOARD_BASE);
+}
+
+/* ---------------- 文件上传（admin 8090 · MinIO） ---------------- */
+
+/** 上传商品主图，返回可写入 mainImage 的稳定 URL */
+export async function uploadProductImage(file: File): Promise<UploadResult> {
+  const form = new FormData();
+  form.append('file', file);
+  const headers: Record<string, string> = {};
+  const token = adminToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${UPLOAD_BASE}/image`, { method: 'POST', headers, body: form });
+  const body = (await res.json().catch(() => null)) as ApiResp<UploadResult> | null;
+  if (body && body.code === 2000) {
+    return body.data;
+  }
+  throw new Error(body?.msg || `上传失败（HTTP ${res.status}）`);
 }
 
 /* ---------------- 商品（product 8083） ---------------- */
@@ -340,6 +366,64 @@ export function queryAuditLogs(query: {
   return request<PageResult<AuditLog>>(`${AUDIT_BASE}/logs?${params.toString()}`);
 }
 
+/* ---------------- 码表（admin 8090 + dict） ---------------- */
+
+export function getDictTypes(): Promise<DictItem[]> {
+  return request<DictItem[]>(`${DICT_BASE}/types`);
+}
+
+export function getDictPage(query: { page?: number; size?: number; type?: string; status?: number } = {}): Promise<PageResult<DictItem>> {
+  const params = new URLSearchParams();
+  Object.entries({ page: 1, size: 20, ...query }).forEach(([k, v]) => {
+    if (v === undefined || v === null || (typeof v === 'string' && v === '')) return;
+    params.set(k, String(v));
+  });
+  return request<PageResult<DictItem>>(`${DICT_BASE}?${params.toString()}`);
+}
+
+export function createDict(dto: Partial<DictItem>): Promise<number> {
+  return request<number>(`${DICT_BASE}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify(dto),
+  });
+}
+
+export function updateDict(id: string | number, dto: Partial<DictItem>): Promise<void> {
+  return request<void>(`${DICT_BASE}/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify(dto),
+  });
+}
+
+export function deleteDict(id: string | number): Promise<void> {
+  return request<void>(`${DICT_BASE}/${id}`, { method: 'DELETE' });
+}
+
+/* ---------------- 秒杀活动（order 8084） ---------------- */
+
+export function listSeckillActivities(status?: number): Promise<SeckillActivity[]> {
+  const q = status === undefined ? '' : `?status=${status}`;
+  return request<SeckillActivity[]>(`${SECKILL_ADMIN_BASE}${q}`);
+}
+
+export function createSeckillActivity(dto: Partial<SeckillActivity>): Promise<SeckillActivity> {
+  return request<SeckillActivity>(SECKILL_ADMIN_BASE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify(dto),
+  });
+}
+
+export function onlineSeckillActivity(id: number): Promise<void> {
+  return request<void>(`${SECKILL_ADMIN_BASE}/${id}/online`, { method: 'PUT' });
+}
+
+export function offlineSeckillActivity(id: number): Promise<void> {
+  return request<void>(`${SECKILL_ADMIN_BASE}/${id}/offline`, { method: 'PUT' });
+}
+
 /* ---------------- 评论（product 8083） ---------------- */
 
 /** 评论分页查询（可按商品 / 状态过滤）；status：0-正常 1-作者删除 2-管理员隐藏 */
@@ -369,9 +453,9 @@ export function getSearchIndexStatus(): Promise<SearchIndexStatus> {
   return request<SearchIndexStatus>(`${SEARCH_INDEX_BASE}/status`);
 }
 
-/** 全量重建商品索引，返回实际写入的商品数量 */
-export function rebuildSearchIndex(): Promise<number> {
-  return request<number>(`${SEARCH_INDEX_BASE}/rebuild`, { method: 'POST' });
+/** 全量重建商品索引 */
+export function rebuildSearchIndex(): Promise<SearchIndexRebuildResult> {
+  return request<SearchIndexRebuildResult>(`${SEARCH_INDEX_BASE}/rebuild`, { method: 'POST' });
 }
 
 /* ---------------- 视频（video 8092） ---------------- */

@@ -112,22 +112,8 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.page-title {
-  margin: 0 0 16px;
-  font-size: 20px;
-}
-.stat-label {
-  color: #909399;
-  font-size: 14px;
-  margin-bottom: 8px;
-}
-.stat-value {
-  color: #303133;
-  font-size: 24px;
-  font-weight: bold;
-}
 .second-row {
-  margin-top: 16px;
+  margin-top: var(--space-4);
 }
 /* 无图表库，用等高列 + 百分比高度柱体做一个轻量柱状图（够看清趋势即可） */
 .chart {
@@ -155,7 +141,7 @@ onMounted(() => {
   position: relative;
   width: 60%;
   min-height: 2px;
-  background: linear-gradient(180deg, #409eff 0%, #79bbff 100%);
+  background: var(--chart-hue, #1d5fbf);
   border-radius: 4px 4px 0 0;
 }
 .bar-value {
@@ -164,16 +150,16 @@ onMounted(() => {
   left: 50%;
   transform: translateX(-50%);
   font-size: 12px;
-  color: #606266;
+  color: var(--muted);
   white-space: nowrap;
 }
 .bar-label {
   margin-top: 6px;
   font-size: 12px;
-  color: #303133;
+  color: var(--text);
 }
 .bar-sub {
   font-size: 12px;
-  color: #909399;
+  color: var(--muted);
 }
 </style>

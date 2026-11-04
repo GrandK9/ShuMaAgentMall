@@ -538,9 +538,11 @@ onUnmounted(abortStream);
 .chat-page {
   flex: 1;
   min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: row;
   overflow: hidden;
+  background: var(--surface-card);
 }
 
 .chat-main {
@@ -553,21 +555,22 @@ onUnmounted(abortStream);
 
 /* 左侧会话列表 */
 .chat-sidebar {
-  width: 260px;
+  width: 280px;
   flex-shrink: 0;
   min-height: 0;
-  border-right: 1px solid #e4e7ed;
-  background: #fff;
+  border-right: 1px solid var(--border-subtle);
+  background: var(--surface);
   display: flex;
   flex-direction: column;
 }
 .sidebar-header {
-  padding: 16px;
+  padding: var(--space-4);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid #e4e7ed;
+  border-bottom: 1px solid var(--border-subtle);
   font-weight: 600;
+  color: var(--ink);
 }
 .session-list {
   flex: 1;
@@ -578,29 +581,28 @@ onUnmounted(abortStream);
   position: relative;
   padding: 10px 12px;
   margin-bottom: 8px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
-  transition: background 0.2s;
-  border: 1px solid transparent;
+  transition: background var(--duration-fast) var(--ease-out);
+  background: transparent;
 }
 .session-item:hover {
-  background: #f5f7fa;
+  background: var(--surface-hover);
 }
 .session-item.active {
-  background: #ecf5ff;
-  border-color: #b3d8ff;
+  background: var(--surface-card);
 }
 .session-title {
-  font-size: 14px;
-  color: #303133;
+  font-size: var(--text-sm);
+  color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   padding-right: 40px;
 }
 .session-meta {
-  font-size: 12px;
-  color: #909399;
+  font-size: var(--text-xs);
+  color: var(--muted);
   margin-top: 4px;
 }
 .session-delete {
@@ -619,11 +621,11 @@ onUnmounted(abortStream);
 .chat-body {
   flex: 1;
   overflow-y: auto;
-  padding: 20px 24px;
+  padding: var(--space-5) var(--space-6);
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  background: #f5f7fa;
+  gap: var(--space-3);
+  background: var(--ground);
   min-width: 0;
 }
 .msg-row {
@@ -636,17 +638,14 @@ onUnmounted(abortStream);
   justify-content: flex-start;
 }
 .bubble {
-  max-width: 76%;
-  padding: 12px 16px;
-  border-radius: 10px;
-  background: #fff;
-  border: 1px solid #e4e7ed;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+  max-width: min(76%, 42rem);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
 }
 .msg-row.user .bubble {
-  background: #409eff;
-  border-color: #409eff;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 .bubble-text {
   white-space: pre-wrap;
@@ -736,15 +735,15 @@ onUnmounted(abortStream);
 }
 .md-body :deep(blockquote) {
   margin: 8px 0;
-  padding: 4px 12px;
-  border-left: 3px solid #409eff;
-  color: #606266;
-  background: #f5f7fa;
-  border-radius: 4px;
+  padding: var(--space-2) var(--space-3);
+  color: var(--muted);
+  background: var(--surface-inset);
+  border-radius: var(--radius-md);
 }
 .md-body :deep(a) {
-  color: #409eff;
-  text-decoration: none;
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
 }
 .tool-trace-collapse {
   margin-top: 12px;
@@ -799,9 +798,9 @@ onUnmounted(abortStream);
 /* 输入区 */
 .chat-footer {
   flex-shrink: 0;
-  padding: 12px 24px 16px;
-  background: #fff;
-  border-top: 1px solid #e4e7ed;
+  padding: var(--space-3) var(--space-6) var(--space-4);
+  background: var(--surface-card);
+  border-top: 1px solid var(--border-subtle);
 }
 .quick-cmds {
   display: flex;
@@ -814,8 +813,8 @@ onUnmounted(abortStream);
   user-select: none;
 }
 .quick-tag:hover {
-  color: #409eff;
-  border-color: #409eff;
+  color: var(--link);
+  border-color: color-mix(in srgb, var(--link) 45%, var(--border-subtle));
 }
 .options-row {
   display: flex;
@@ -833,7 +832,7 @@ onUnmounted(abortStream);
 }
 .hint {
   margin: 8px 0 0;
-  font-size: 12px;
-  color: #c0c4cc;
+  font-size: var(--text-xs);
+  color: var(--muted);
 }
 </style>

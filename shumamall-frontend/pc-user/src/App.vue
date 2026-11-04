@@ -1,18 +1,31 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { login, register } from './api';
 import { clearAuth, isLoggedIn, setAuth, store } from './store';
 
 const router = useRouter();
+const route = useRoute();
 
-/* 登录/注册弹窗 */
 const loginVisible = ref(false);
 const registerVisible = ref(false);
 const loginName = ref('');
 const loginPwd = ref('');
 const regForm = ref({ username: '', password: '', phone: '', email: '' });
+
+/** 顶栏主导航（浏览型入口，不含账号类页面） */
+const navItems = [
+  { path: '/', label: '首页' },
+  { path: '/seckill', label: '限时秒杀' },
+  { path: '/chat', label: 'AI 导购' },
+  { path: '/video', label: '视频' },
+];
+
+function navActive(path: string): boolean {
+  if (path === '/') return route.path === '/';
+  return route.path === path || route.path.startsWith(`${path}/`);
+}
 
 async function doLogin(): Promise<void> {
   if (!loginName.value || !loginPwd.value) {
@@ -53,70 +66,108 @@ function doLogout(): void {
   void router.push('/');
 }
 
-/** 新会话：通知 ChatView 重置并跳转 */
 function newSession(): void {
   store.newSessionReq += 1;
   void router.push('/chat');
 }
 
-const menuItems = [
-  { index: '/chat', title: '🤖 AI 导购' },
-  { index: '/', title: '🏠 商品首页' },
-  { index: '/cart', title: '🛒 购物车' },
-  { index: '/orders', title: '📦 我的订单' },
-  { index: '/address', title: '📍 收货地址' },
-  { index: '/video', title: '🎬 视频播放' },
-  { index: '/profile', title: '👤 个人中心' },
-];
+function goProfile(): void {
+  void router.push('/profile');
+}
+
+function goOrders(): void {
+  void router.push('/orders');
+}
+
+function goAddress(): void {
+  void router.push('/address');
+}
+
+const displayName = computed(() => store.username || '我的账户');
+
+/** 沉浸式任务页：占满 header 以下区域，无内边距/页脚 */
+const isImmersiveMain = computed(
+  () => route.path === '/chat' || route.path.startsWith('/chat/')
+);
+/** 任务列表页：与画布同宽铺面，避免单卡片浮在 ground 上 */
+const isFlushMain = computed(() => route.path === '/seckill');
 </script>
 
 <template>
   <div class="app-shell">
-    <!-- 顶栏 -->
-    <header class="app-header">
-      <div class="app-title">
-        <span class="logo">🛍</span>
-        <div>
-          <h1>数码商城 · AI 导购演示</h1>
-          <p>Spring AI · DeepSeek · Skill / Memory / Planner / Tools 四模块 · 流式输出</p>
-        </div>
-      </div>
+    <header class="site-header">
+      <div class="header-inner">
+        <router-link to="/" class="brand" aria-label="数码商城首页">
+          <span class="brand-mark" aria-hidden="true">SM</span>
+          <span class="brand-name">数码商城</span>
+        </router-link>
 
-      <div class="header-right">
-        <template v-if="!isLoggedIn">
-          <el-button type="primary" @click="loginVisible = true">登录</el-button>
-          <el-button @click="registerVisible = true">注册</el-button>
-        </template>
-        <template v-else>
-          <el-tag type="success" effect="dark">{{ store.username }}</el-tag>
-          <el-button size="default" @click="newSession">新会话</el-button>
-          <el-button size="default" @click="doLogout">退出</el-button>
-        </template>
+        <nav class="main-nav" aria-label="主导航">
+          <router-link
+            v-for="item in navItems"
+            :key="item.path"
+            :to="item.path"
+            class="nav-link"
+            :class="{ active: navActive(item.path) }"
+          >
+            {{ item.label }}
+          </router-link>
+        </nav>
+
+        <div class="header-actions">
+          <router-link to="/cart" class="action-link cart-link" :class="{ active: navActive('/cart') }">
+            <svg class="header-cart-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zm10 0c-1.1 0-1.99.9-1.99 2S15.9 22 17 22s2-.9 2-2-.9-2-2-2zM7.16 14h9.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49a1 1 0 0 0-.87-1.48H5.21L4.27 2H1v2h2l3.6 7.59-1.35 2.44C4.52 15.37 5.48 17 7 17h12v-2H7.16l1.1-2z"
+              />
+            </svg>
+            <span>购物车</span>
+          </router-link>
+
+          <template v-if="!isLoggedIn">
+            <el-button link type="primary" @click="loginVisible = true">登录</el-button>
+            <el-button type="primary" round @click="registerVisible = true">注册</el-button>
+          </template>
+          <template v-else>
+            <el-dropdown trigger="click" popper-class="user-dropdown-popper">
+              <button type="button" class="user-trigger" aria-haspopup="menu">
+                <span class="user-avatar">{{ displayName.charAt(0).toUpperCase() }}</span>
+                <span class="user-name">{{ displayName }}</span>
+                <span class="user-caret" aria-hidden="true">▾</span>
+              </button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="goProfile">个人中心</el-dropdown-item>
+                  <el-dropdown-item @click="goOrders">我的订单</el-dropdown-item>
+                  <el-dropdown-item @click="goAddress">收货地址</el-dropdown-item>
+                  <el-dropdown-item divided @click="newSession">AI 导购 · 新会话</el-dropdown-item>
+                  <el-dropdown-item divided @click="doLogout">退出登录</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </template>
+        </div>
       </div>
     </header>
 
-    <!-- 主体 -->
-    <div class="app-main">
-      <el-menu
-        :default-active="$route.path"
-        router
-        class="side-menu"
-        background-color="#ffffff"
-        text-color="#606266"
-        active-text-color="#409eff"
+    <main class="site-main">
+      <div
+        class="view-body-inner"
+        :class="{
+          'view-body-inner--immersive': isImmersiveMain,
+          'view-body-inner--flush': isFlushMain,
+        }"
       >
-        <el-menu-item v-for="item in menuItems" :key="item.index" :index="item.index">
-          <span>{{ item.title }}</span>
-        </el-menu-item>
-      </el-menu>
-
-      <el-main class="view-body">
         <router-view />
-      </el-main>
-    </div>
+      </div>
+    </main>
+
+    <footer v-if="!isImmersiveMain" class="site-footer">
+      <span>数码商城 · Spring 微服务演示 · AI 导购</span>
+    </footer>
   </div>
 
-  <!-- 登录弹窗 -->
   <el-dialog v-model="loginVisible" title="登录" width="400px" :close-on-click-modal="false">
     <el-form label-width="70px">
       <el-form-item label="用户名">
@@ -132,7 +183,6 @@ const menuItems = [
     </template>
   </el-dialog>
 
-  <!-- 注册弹窗 -->
   <el-dialog v-model="registerVisible" title="注册" width="400px" :close-on-click-modal="false">
     <el-form label-width="70px">
       <el-form-item label="用户名">
@@ -157,60 +207,191 @@ const menuItems = [
 
 <style scoped>
 .app-shell {
-  height: 100vh;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #f5f7fa;
+  background: var(--ground);
 }
 
-.app-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 24px;
-  background: #fff;
-  border-bottom: 1px solid #e4e7ed;
-  gap: 16px;
-}
-.app-title {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.app-title .logo {
-  font-size: 28px;
-}
-.app-title h1 {
-  margin: 0;
-  font-size: 18px;
-}
-.app-title p {
-  margin: 2px 0 0;
-  font-size: 12px;
-  color: #909399;
-}
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
-.app-main {
-  flex: 1;
+.header-inner {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 0 var(--space-6);
+  height: 64px;
   display: flex;
-  overflow: hidden;
+  align-items: center;
+  gap: var(--space-6);
 }
-.side-menu {
-  width: 180px;
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  text-decoration: none;
   flex-shrink: 0;
-  border-right: 1px solid #e4e7ed;
 }
-.view-body {
+.brand-mark {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: var(--radius-md);
+}
+.brand-name {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.main-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 1;
+  min-width: 0;
+}
+.nav-link {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--muted);
+  text-decoration: none;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
+}
+.nav-link:hover {
+  color: var(--ink);
+}
+.nav-link.active {
+  color: var(--ink);
+  border-bottom-color: var(--link);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+.action-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--gray-700);
+  text-decoration: none;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  transition: color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+
+.header-cart-icon {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+.action-link:hover,
+.action-link.active {
+  color: var(--ink);
+  background: var(--surface-hover);
+}
+
+.user-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 10px 4px 4px;
+  border: 1px solid var(--gray-200);
+  border-radius: 999px;
+  background: var(--surface-card);
+  cursor: pointer;
+  font: inherit;
+  color: var(--gray-700);
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+.user-trigger:hover {
+  border-color: var(--muted);
+}
+.user-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.user-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+.user-caret {
+  font-size: 10px;
+  color: var(--gray-500);
+}
+
+.site-main {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  padding: 0;
+  width: 100%;
   display: flex;
   flex-direction: column;
+}
+
+.site-footer {
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface);
+  text-align: center;
+  padding: var(--space-5) var(--space-4);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+@media (max-width: 768px) {
+  .header-inner {
+    flex-wrap: wrap;
+    height: auto;
+    padding-top: var(--space-3);
+    padding-bottom: var(--space-3);
+  }
+  .main-nav {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+  .user-name {
+    display: none;
+  }
 }
 </style>

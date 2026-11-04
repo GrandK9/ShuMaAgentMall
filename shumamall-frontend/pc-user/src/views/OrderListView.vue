@@ -205,34 +205,32 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.order-page {
-  padding: 16px 24px 24px;
-}
 .status-tabs {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
 }
-.amount {
-  color: #f56c6c;
+.order-page .amount {
   font-weight: 600;
+  color: var(--ink);
 }
 .detail {
-  padding: 8px 20px;
+  padding: var(--space-2) var(--space-5);
 }
 .remark {
-  margin: 8px 0 0;
-  font-size: 13px;
-  color: #909399;
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+  color: var(--muted);
 }
 .pay-tip {
-  margin: 0 0 12px;
-  line-height: 1.9;
+  margin: 0 0 var(--space-3);
+  line-height: 1.7;
+  color: var(--ink);
 }
 .pager {
-  margin-top: 16px;
+  margin-top: var(--space-4);
   display: flex;
   justify-content: center;
 }
 .noop {
-  color: #c0c4cc;
+  color: var(--gray-200);
 }
 </style>

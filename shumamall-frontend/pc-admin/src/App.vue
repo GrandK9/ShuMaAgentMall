@@ -70,6 +70,7 @@ const MENU_ROUTES: Record<string, { path: string; icon: string }> = {
   'video:view': { path: '/video', icon: '🎬' },
   'comment:view': { path: '/comment', icon: '💬' },
   'search:view': { path: '/search-index', icon: '🔍' },
+  'dict:view': { path: '/dict', icon: '📖' },
 };
 
 /** 后端菜单树（GET /permission/menus，已按当前登录用户的角色权限过滤） */
@@ -107,7 +108,7 @@ onMounted(() => {
     <!-- 顶栏 -->
     <header class="admin-header">
       <div class="brand">
-        <span class="logo">🛠️</span>
+        <span class="logo-mark">ADM</span>
         <h1>数码商城 · 管理后台</h1>
       </div>
       <div class="header-actions">
@@ -127,9 +128,9 @@ onMounted(() => {
         :default-active="$route.path"
         router
         class="admin-menu"
-        background-color="#304156"
-        text-color="#bfcbd9"
-        active-text-color="#409eff"
+        background-color="#ffffff"
+        text-color="#6b6b6b"
+        active-text-color="#0a0a0a"
       >
         <el-menu-item v-for="item in menuItems" :key="item.index" :index="item.index">
           <span>{{ item.title }}</span>
@@ -166,54 +167,74 @@ onMounted(() => {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #f0f2f5;
+  background: var(--ground);
 }
 .admin-header {
   height: 56px;
-  background: #fff;
-  border-bottom: 1px solid #e4e7ed;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
+  padding: 0 var(--space-6);
 }
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
 }
-.brand .logo {
-  font-size: 24px;
+.logo-mark {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 6px 8px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 6px;
 }
 .brand h1 {
   margin: 0;
-  font-size: 18px;
-  color: #303133;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
 }
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .admin-body {
   flex: 1;
   display: flex;
   overflow: hidden;
+  min-height: 0;
 }
 .admin-menu {
-  width: 200px;
+  width: var(--sidebar-width);
   flex-shrink: 0;
-  border-right: none;
+  border-right: 1px solid var(--border);
+  padding-top: var(--space-2);
+}
+.admin-menu :deep(.el-menu-item) {
+  margin: 2px 12px;
+  border-radius: 6px;
+  height: 44px;
+  line-height: 44px;
+  font-weight: 500;
+}
+.admin-menu :deep(.el-menu-item.is-active) {
+  background: var(--raised) !important;
+  font-weight: 600;
 }
 .admin-main {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
+  padding: var(--space-5);
 }
 .loading-hint {
-  padding: 32px;
+  padding: var(--space-8);
   text-align: center;
-  color: #909399;
-  font-size: 14px;
+  color: var(--gray-500);
+  font-size: var(--text-sm, 0.875rem);
 }
 </style>

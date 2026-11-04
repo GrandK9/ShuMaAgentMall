@@ -1,0 +1,75 @@
+/* pc-user · Operate · 冷灰画布 + 炭黑 CTA（数码零售，与管理端 ledger 同族） */
+:root {
+  --font-display: "Panchang", "Noto Sans SC", sans-serif;
+  --font-sans: "Switzer", "Noto Sans SC", system-ui, sans-serif;
+
+  --ground: #e4e8ef;
+  --surface: #f0f2f6;
+  --surface-card: #ffffff;
+  --ink: #0c0e12;
+  --muted: #5c6472;
+  --accent: #141820;
+  --accent-ink: #f7f8fb;
+  /* 链接、次要强调（与管理端图表蓝同系，不占用主按钮色） */
+  --link: #1d5fbf;
+
+  /* 弱分隔：用色阶过渡，避免整圈描边 */
+  --separator: color-mix(in srgb, var(--ink) 8%, transparent);
+  --border-subtle: color-mix(in srgb, var(--ink) 9%, var(--surface));
+  --surface-raised: color-mix(in srgb, var(--surface-card) 92%, var(--surface));
+  --surface-inset: color-mix(in srgb, var(--surface) 55%, var(--ground));
+  --surface-hover: color-mix(in srgb, var(--surface-card) 82%, var(--ground));
+
+  --gray-200: var(--border-subtle);
+  --gray-500: var(--muted);
+  --gray-600: #3a4150;
+  --gray-700: var(--ink);
+  --gray-900: var(--ink);
+
+  --text-xs: 0.8125rem;
+  --text-sm: 0.875rem;
+  --text-base: 1.0625rem;
+  --text-lg: 1.25rem;
+  --text-xl: clamp(1.5rem, 1.2rem + 1vw, 2rem);
+  --text-2xl: clamp(2rem, 1.3rem + 2.5vw, 3.25rem);
+
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-soft: cubic-bezier(0.33, 1, 0.68, 1);
+  --duration-fast: 180ms;
+  --t-press: 140ms;
+  --t-hover: 180ms;
+  --t-reveal: 800ms;
+  --t-open: 1200ms;
+  --stagger-line: 90ms;
+  --stagger-item: 70ms;
+
+  --el-color-primary: var(--accent);
+  --el-color-primary-light-3: #3a404c;
+  --el-color-primary-light-5: #5c6270;
+  --el-color-primary-light-7: #949aa8;
+  --el-color-primary-light-9: #eceef2;
+  --el-color-primary-dark-2: #0a0c10;
+  --el-border-radius-base: var(--radius-md);
+  --el-font-family: var(--font-sans);
+  --el-bg-color: var(--surface-card);
+  --el-text-color-primary: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

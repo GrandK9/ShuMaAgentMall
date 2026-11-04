@@ -49,6 +49,10 @@ export default defineConfig({
         target: 'http://127.0.0.1:8084',
         changeOrigin: true,
       },
+      '/api/v1/seckill': {
+        target: 'http://127.0.0.1:8084',
+        changeOrigin: true,
+      },
       // payment 服务（8085）
       '/api/v1/payment': {
         target: 'http://127.0.0.1:8085',

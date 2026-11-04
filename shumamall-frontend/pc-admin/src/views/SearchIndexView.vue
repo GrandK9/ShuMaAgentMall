@@ -33,8 +33,9 @@ async function onRebuild(): Promise<void> {
   );
   rebuilding.value = true;
   try {
-    lastWritten.value = await rebuildSearchIndex();
-    ElMessage.success(`索引重建完成，写入 ${lastWritten.value} 条商品文档`);
+    const result = await rebuildSearchIndex();
+    lastWritten.value = result.written;
+    ElMessage.success(`索引重建完成，写入 ${result.written} 条商品文档`);
     await loadStatus();
   } catch (e) {
     ElMessage.error(`索引重建失败：${(e as Error).message}`);
@@ -60,7 +61,10 @@ onMounted(() => {
 
     <el-card shadow="never" v-loading="loading">
       <el-descriptions :column="1" border>
-        <el-descriptions-item label="索引名">{{ status?.index ?? '-' }}</el-descriptions-item>
+        <el-descriptions-item label="索引别名">{{ status?.alias ?? '-' }}</el-descriptions-item>
+        <el-descriptions-item label="物理索引">
+          {{ status?.indices?.length ? status.indices.join('、') : '-' }}
+        </el-descriptions-item>
         <el-descriptions-item label="索引是否存在">
           <el-tag :type="status?.exists ? 'success' : 'danger'">
             {{ status?.exists ? '存在' : '不存在' }}

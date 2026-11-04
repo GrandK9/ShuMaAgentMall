@@ -1,0 +1,42 @@
+/* tasteskill v2 · app sheet Achromatic ledger (commerce) */
+:root {
+  --font-sans: "Geist", "Noto Sans SC", system-ui, sans-serif;
+
+  --ground: #f2f4f7;
+  --surface: #ffffff;
+  --raised: #eeeeee;
+  --border: #e6e6e6;
+  --rule: #f0f0f0;
+  --text: #0a0a0a;
+  --muted: #6b6b6b;
+  --accent: #141414;
+  --chart-hue: #1d5fbf;
+
+  --gray-100: var(--ground);
+  --gray-200: var(--border);
+  --gray-500: var(--muted);
+  --gray-700: #3d3d3d;
+  --gray-900: var(--text);
+
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --radius-lg: 8px;
+  --sidebar-width: 256px;
+
+  --el-color-primary: var(--accent);
+  --el-color-primary-light-9: var(--raised);
+  --el-color-primary-dark-2: #000;
+  --el-border-radius-base: 6px;
+  --el-font-family: var(--font-sans);
+  --el-bg-color: var(--surface);
+  --el-text-color-primary: var(--text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
+}

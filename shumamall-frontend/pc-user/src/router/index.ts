@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router';
 const routes = [
   { path: '/', name: 'home', component: () => import('../views/HomeView.vue') },
   { path: '/product/:id', name: 'product-detail', component: () => import('../views/ProductDetailView.vue') },
+  { path: '/seckill', name: 'seckill', component: () => import('../views/SeckillView.vue') },
   { path: '/cart', name: 'cart', component: () => import('../views/CartView.vue') },
   { path: '/checkout', name: 'checkout', component: () => import('../views/CheckoutView.vue') },
   { path: '/orders', name: 'orders', component: () => import('../views/OrderListView.vue') },

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
@@ -30,6 +30,19 @@ const selectedSku = computed(
   () => product.value?.skuList?.find((s) => s.id === selectedSkuId.value) ?? null,
 );
 const quantity = ref(1);
+
+/** 详情页入场动效（无 JS 时不隐藏内容） */
+const detailMotionEnabled = ref(false);
+const detailMotionPlay = ref(false);
+
+function triggerDetailMotion(): void {
+  detailMotionPlay.value = false;
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      detailMotionPlay.value = true;
+    });
+  });
+}
 
 const maxStock = computed(() => selectedSku.value?.stock ?? 99);
 
@@ -351,6 +364,7 @@ function formatTime(t?: string): string {
 
 async function load(id: number): Promise<void> {
   loading.value = true;
+  detailMotionPlay.value = false;
   try {
     const p = await getProductDetail(id);
     product.value = p;
@@ -361,6 +375,7 @@ async function load(id: number): Promise<void> {
     ElMessage.error(`商品加载失败：${(e as Error).message}`);
   } finally {
     loading.value = false;
+    if (product.value) triggerDetailMotion();
   }
 }
 
@@ -396,7 +411,19 @@ function onBuyNow(): void {
   router.push('/checkout');
 }
 
+watch(
+  () => route.params.id,
+  (raw) => {
+    const id = Number(raw);
+    if (Number.isNaN(id)) return;
+    void load(id).then(() => {
+      void loadComments(1);
+    });
+  }
+);
+
 onMounted(() => {
+  detailMotionEnabled.value = true;
   const id = Number(route.params.id);
   if (!Number.isNaN(id)) {
     void load(id).then(() => {
@@ -407,20 +434,29 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="detail-page" v-loading="loading">
-    <el-page-header @back="goBack" content="商品详情" style="margin-bottom: 16px;" />
-    <div v-if="product" class="detail-body">
-      <div class="gallery">
-        <img v-if="product.mainImage" :src="product.mainImage" :alt="product.name" />
+  <div
+    class="detail-page"
+    :class="{ 'detail-motion': detailMotionEnabled, 'detail-motion--play': detailMotionPlay }"
+    v-loading="loading"
+  >
+    <el-page-header class="detail-back" @back="goBack" content="商品详情" />
+    <div v-if="product" :key="product.id" class="detail-body">
+      <div class="gallery detail-rise detail-rise--0">
+        <img
+          v-if="product.mainImage"
+          class="detail-gallery-img"
+          :src="product.mainImage"
+          :alt="product.name"
+        />
         <div v-else class="img-placeholder">暂无图片</div>
       </div>
       <div class="info">
-        <h2>{{ product.name }}</h2>
-        <p class="subtitle">{{ product.subtitle || '暂无简介' }}</p>
-        <div class="price">¥{{ product.price.toFixed(2) }}</div>
-        <div class="sales">销量：{{ product.salesVolume ?? 0 }}</div>
+        <h2 class="detail-rise detail-rise--1">{{ product.name }}</h2>
+        <p class="subtitle detail-rise detail-rise--2">{{ product.subtitle || '暂无简介' }}</p>
+        <div class="price amount detail-rise detail-rise--3">¥{{ product.price.toFixed(2) }}</div>
+        <div class="sales detail-rise detail-rise--4">销量：{{ product.salesVolume ?? 0 }}</div>
 
-        <div class="sku-row">
+        <div class="sku-row detail-rise detail-rise--5">
           <span class="label">规格：</span>
           <el-radio-group v-model="selectedSkuId">
             <el-radio v-for="sku in product.skuList" :key="sku.id" :value="sku.id" :disabled="(sku.stock ?? 0) <= 0">
@@ -429,23 +465,23 @@ onMounted(() => {
           </el-radio-group>
         </div>
 
-        <div class="qty-row">
+        <div class="qty-row detail-rise detail-rise--6">
           <span class="label">数量：</span>
           <el-input-number v-model="quantity" :min="1" :max="maxStock" />
           <span class="stock">库存 {{ selectedSku?.stock ?? 0 }}</span>
         </div>
 
-        <div class="actions">
-          <el-button size="large" @click="onAddCart">加入购物车</el-button>
-          <el-button size="large" type="primary" @click="onBuyNow">立即购买</el-button>
+        <div class="purchase-actions detail-rise detail-rise--7">
+          <el-button class="btn-cart" size="large" @click="onAddCart">加入购物车</el-button>
+          <el-button class="btn-buy" size="large" type="primary" @click="onBuyNow">立即购买</el-button>
         </div>
       </div>
     </div>
 
     <!-- 评论区 -->
-    <section v-if="product" class="comment-section">
+    <section v-if="product" class="comment-section detail-rise detail-rise--8">
       <div class="comment-head">
-        <span class="comment-title">用户评论</span>
+        <h2 class="comment-title">用户评论</h2>
         <el-radio-group v-model="commentSort" size="small" @change="loadComments(1)">
           <el-radio-button value="latest">最新</el-radio-button>
           <el-radio-button value="hot">最热</el-radio-button>
@@ -561,227 +597,405 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.detail-page {
-  padding: 16px 24px;
+@keyframes detail-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 28px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
 }
+
+@keyframes detail-gallery-in {
+  from {
+    opacity: 0.92;
+    transform: scale(1.08);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .detail-motion--play .detail-rise {
+    opacity: 0;
+    transform: translate3d(0, 28px, 0);
+    animation: detail-enter 720ms var(--ease-out) forwards;
+  }
+  .detail-motion--play .detail-rise--0 {
+    animation-delay: 0ms;
+  }
+  .detail-motion--play .detail-rise--1 {
+    animation-delay: var(--stagger-line);
+  }
+  .detail-motion--play .detail-rise--2 {
+    animation-delay: calc(var(--stagger-line) * 2);
+  }
+  .detail-motion--play .detail-rise--3 {
+    animation-delay: calc(var(--stagger-line) * 3);
+  }
+  .detail-motion--play .detail-rise--4 {
+    animation-delay: calc(var(--stagger-line) * 3 + 40ms);
+  }
+  .detail-motion--play .detail-rise--5 {
+    animation-delay: calc(var(--stagger-line) * 4);
+  }
+  .detail-motion--play .detail-rise--6 {
+    animation-delay: calc(var(--stagger-line) * 4 + 50ms);
+  }
+  .detail-motion--play .detail-rise--7 {
+    animation-delay: calc(var(--stagger-line) * 5);
+  }
+  .detail-motion--play .detail-rise--8 {
+    animation-delay: calc(var(--stagger-line) * 6);
+  }
+  .detail-motion--play .gallery.detail-rise--0 .detail-gallery-img {
+    animation: detail-gallery-in 900ms var(--ease-soft) forwards;
+    animation-delay: 0ms;
+  }
+}
+
+.detail-back {
+  margin-bottom: var(--space-4);
+}
+
 .detail-body {
-  display: flex;
-  gap: 24px;
-  background: #fff;
-  padding: 24px;
-  border-radius: 8px;
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+  gap: var(--space-8);
+  background: var(--surface-raised);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
 }
+
+@media (max-width: 768px) {
+  .detail-body {
+    grid-template-columns: 1fr;
+  }
+}
+
 .gallery {
-  width: 360px;
-  height: 360px;
-  background: #f5f7fa;
+  aspect-ratio: 1;
+  max-height: 400px;
+  background: var(--surface-inset);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
 }
-.gallery img {
+
+.detail-gallery-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-}
-.img-placeholder {
-  color: #909399;
-}
-.info {
-  flex: 1;
-}
-.info h2 {
-  margin: 0 0 8px;
-}
-.subtitle {
-  color: #606266;
-  margin: 0 0 16px;
-}
-.price {
-  color: #f56c6c;
-  font-size: 28px;
-  font-weight: bold;
-}
-.sales {
-  color: #909399;
-  font-size: 14px;
-  margin: 8px 0 20px;
-}
-.sku-row,
-.qty-row {
-  margin-bottom: 16px;
-}
-.label {
-  color: #606266;
-  margin-right: 8px;
-}
-.stock {
-  margin-left: 12px;
-  color: #909399;
-  font-size: 14px;
-}
-.actions {
-  margin-top: 24px;
-  display: flex;
-  gap: 12px;
+  transform-origin: center center;
 }
 
-/* ---------------- 评论区 ---------------- */
-.comment-section {
-  margin-top: 16px;
-  background: #fff;
-  border-radius: 8px;
-  padding: 20px 24px;
+.img-placeholder {
+  color: var(--muted);
+  font-size: var(--text-sm);
 }
+
+.info {
+  min-width: 0;
+}
+
+.info h2 {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  line-height: 1.25;
+}
+
+.subtitle {
+  color: var(--muted);
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.price {
+  font-size: clamp(1.5rem, 1.2rem + 1vw, 1.875rem);
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.sales {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  margin: var(--space-2) 0 var(--space-5);
+}
+
+.sku-row,
+.qty-row {
+  margin-bottom: var(--space-4);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.label {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  flex-shrink: 0;
+}
+
+.stock {
+  margin-left: var(--space-3);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.purchase-actions {
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--separator);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  width: 100%;
+  max-width: 28rem;
+}
+
+.purchase-actions :deep(.el-button) {
+  width: 100%;
+  height: 48px;
+  margin: 0;
+  font-weight: 600;
+  font-size: var(--text-sm);
+  letter-spacing: 0.02em;
+}
+
+.purchase-actions :deep(.btn-cart.el-button) {
+  --el-button-bg-color: var(--surface-card);
+  --el-button-border-color: color-mix(in srgb, var(--ink) 18%, transparent);
+  --el-button-text-color: var(--ink);
+  --el-button-hover-bg-color: var(--surface);
+  --el-button-hover-border-color: var(--accent);
+  --el-button-hover-text-color: var(--accent);
+}
+
+.purchase-actions :deep(.btn-buy.el-button--primary) {
+  --el-button-bg-color: var(--accent);
+  --el-button-border-color: var(--accent);
+}
+
+@media (max-width: 768px) {
+  .purchase-actions {
+    max-width: none;
+    grid-template-columns: 1fr;
+  }
+
+  .purchase-actions :deep(.btn-buy) {
+    order: -1;
+  }
+}
+
+.comment-section {
+  margin-top: var(--space-6);
+  background: var(--surface-raised);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5) var(--space-6);
+}
+
 .comment-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
+
 .comment-title {
-  font-size: 16px;
-  font-weight: bold;
-  color: #303133;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-base);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink);
 }
+
 .comment-input {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 20px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-5);
+  border-bottom: 1px solid var(--separator);
 }
+
 .comment-input-actions {
   display: flex;
   justify-content: flex-end;
 }
+
 .video-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
+
 .video-hint,
 .video-stage {
-  color: #909399;
-  font-size: 12px;
+  color: var(--muted);
+  font-size: var(--text-xs);
 }
+
 .comment-video {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
-  margin: 4px 0 8px;
+  gap: var(--space-2);
+  margin: var(--space-1) 0 var(--space-2);
 }
+
 .comment-video-player {
-  max-width: 420px;
+  max-width: min(420px, 100%);
 }
+
 .comment-list {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-4);
   min-height: 80px;
 }
+
 .comment-item {
-  border-bottom: 1px solid #f0f2f5;
-  padding-bottom: 14px;
+  border-bottom: 1px solid var(--separator);
+  padding-bottom: var(--space-4);
 }
+
+.comment-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
 .comment-top {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }
+
 .comment-user {
-  color: #409eff;
-  font-size: 13px;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: 600;
   max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 .comment-time {
   margin-left: auto;
-  color: #909399;
-  font-size: 12px;
+  color: var(--muted);
+  font-size: var(--text-xs);
 }
+
 .comment-content {
-  color: #303133;
-  font-size: 14px;
-  margin: 8px 0;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  margin: var(--space-2) 0;
   line-height: 1.6;
   word-break: break-word;
 }
+
 .comment-actions {
   display: flex;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: var(--space-4);
 }
+
 .action-btn {
-  color: #606266;
-  font-size: 13px;
+  color: var(--muted);
+  font-size: var(--text-sm);
   cursor: pointer;
   user-select: none;
 }
+
 .action-btn.liked,
 .action-btn:hover {
-  color: #409eff;
+  color: var(--accent);
 }
+
 .action-btn.danger:hover {
-  color: #f56c6c;
+  color: var(--el-color-danger);
 }
+
 .reply-box {
-  margin-top: 10px;
-  padding: 10px;
-  background: #f8f9fb;
-  border-radius: 6px;
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface);
+  border-radius: var(--radius-md);
 }
+
 .reply-box-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 8px;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
 }
+
 .reply-list {
-  margin-top: 10px;
-  background: #f8f9fb;
-  border-radius: 6px;
-  padding: 8px 12px;
+  margin-top: var(--space-3);
+  background: var(--surface-inset);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
+
 .reply-item {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--space-2);
   flex-wrap: wrap;
 }
+
 .reply-user {
-  color: #409eff;
-  font-size: 13px;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: 600;
   flex-shrink: 0;
 }
+
 .reply-arrow {
-  color: #909399;
-  font-size: 12px;
+  color: var(--muted);
+  font-size: var(--text-xs);
   flex-shrink: 0;
 }
+
 .reply-content {
   flex: 1;
-  color: #303133;
-  font-size: 13px;
+  color: var(--ink);
+  font-size: var(--text-sm);
   word-break: break-word;
 }
+
 .toggle-replies {
   display: inline-block;
-  margin-top: 8px;
-  color: #409eff;
-  font-size: 12px;
+  margin-top: var(--space-2);
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: 500;
   cursor: pointer;
 }
+
 .comment-pagination {
   display: flex;
   justify-content: center;
-  margin-top: 16px;
+  margin-top: var(--space-4);
 }
 </style>

@@ -69,6 +69,14 @@ export interface ProductSku {
   status?: number;
 }
 
+/* ---------------- 上传（admin 8090） ---------------- */
+
+export interface UploadResult {
+  fileUrl: string;
+  fileName: string;
+  fileSize: number;
+}
+
 /* ---------------- 商品（shumamall-product 8083） ---------------- */
 
 export interface Product {
@@ -217,6 +225,41 @@ export interface AuditLog {
   costMs?: number;
 }
 
+/* ---------------- 码表（shumamall-admin + dict 模块） ---------------- */
+
+export interface DictItem {
+  /** 雪花 ID，大数时后端可能按字符串下发 */
+  id: string | number;
+  type: string;
+  typeLabel: string;
+  code: string;
+  label: string;
+  value?: string;
+  parentCode?: string;
+  sortOrder?: number;
+  status?: number;
+  remark?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/* ---------------- 秒杀（shumamall-order 8084，管理端） ---------------- */
+
+export interface SeckillActivity {
+  id: number;
+  name: string;
+  skuId: number;
+  productId: number;
+  seckillPrice: number;
+  totalStock: number;
+  perUserLimit?: number;
+  startTime: string;
+  endTime: string;
+  status: number;
+  statusLabel?: string;
+  remainingStock?: number | null;
+}
+
 /* ---------------- 评论（shumamall-product 8083，管理端） ---------------- */
 
 /** 评论视图对象（GET /api/v1/admin/comment） */
@@ -250,10 +293,18 @@ export interface CommentVO {
 
 /** 索引状态（GET /api/v1/search/index/status） */
 export interface SearchIndexStatus {
-  index: string;
+  alias: string;
   exists: boolean;
+  indices?: string[];
   /** 索引不存在时后端不返回该字段 */
   docCount?: number;
+}
+
+/** 全量重建结果（POST /api/v1/search/index/rebuild） */
+export interface SearchIndexRebuildResult {
+  alias: string;
+  indices: string[];
+  written: number;
 }
 
 /* ---------------- 视频（shumamall-video 8092） ---------------- */

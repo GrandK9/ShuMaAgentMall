@@ -157,62 +157,63 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.checkout-page {
-  padding: 16px 24px 24px;
-}
 .block {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
 }
 .block-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--space-4);
 }
 .subtotal {
-  color: #f56c6c;
   font-weight: 600;
+  color: var(--ink);
 }
 .addr-group {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
   width: 100%;
 }
 .addr-radio {
   height: auto;
-  padding: 10px 12px;
-  border: 1px solid #e4e7ed;
-  border-radius: 6px;
+  padding: var(--space-3);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-md);
   margin-right: 0;
 }
 .addr-radio :deep(.el-radio__label) {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
   white-space: normal;
 }
 .addr-name {
   font-weight: 600;
+  color: var(--ink);
 }
 .addr-phone {
-  color: #606266;
+  color: var(--muted);
 }
 .addr-detail {
-  color: #909399;
+  color: var(--muted);
+  font-size: var(--text-sm);
 }
 .submit-row {
-  margin-top: 16px;
+  margin-top: var(--space-4);
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 20px;
+  gap: var(--space-5);
 }
 .total {
-  font-size: 14px;
+  font-size: var(--text-sm);
+  color: var(--muted);
 }
-.amount {
-  color: #f56c6c;
+.checkout-page .amount {
+  color: var(--ink);
   font-weight: 700;
-  font-size: 22px;
+  font-size: var(--text-lg);
 }
 </style>
