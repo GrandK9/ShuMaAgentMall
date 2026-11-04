@@ -14,10 +14,10 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class UploadVO {
 
-    /** 文件访问 URL（MinIO 签名 URL，1 小时有效） */
+    /** 访问 URL：商品主图为公开直链；通用上传为短时签名 URL */
     private String fileUrl;
 
-    /** 上传后的文件名 */
+    /** MinIO 对象键（如 product/xxx.jpg） */
     private String fileName;
 
     /** 文件大小（字节） */

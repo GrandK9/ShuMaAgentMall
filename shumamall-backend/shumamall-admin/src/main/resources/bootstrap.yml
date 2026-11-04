@@ -33,6 +33,11 @@ server:
 
 minio:
   endpoint: http://localhost:9000
+  # 浏览器访问对象 URL（与 endpoint 一致；Docker 内网 endpoint 不同时单独配置此项）
+  public-endpoint: http://localhost:9000
   access-key: shumamall
   secret-key: shumamall123
   bucket: shumamall-raw
+  # 商品主图等静态资源：匿名可读，URL 可长期写入 DB
+  public-bucket: shumamall-public
+  product-image-max-bytes: 5242880

@@ -19,4 +19,12 @@ public interface UploadService {
      * @return 上传结果视图对象
      */
     UploadVO upload(MultipartFile file);
+
+    /**
+     * 上传商品主图至公开桶，返回可长期存入数据库的访问 URL。
+     *
+     * @param file 图片文件
+     * @return 上传结果
+     */
+    UploadVO uploadProductImage(MultipartFile file);
 }

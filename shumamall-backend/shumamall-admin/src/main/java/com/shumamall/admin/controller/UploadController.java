@@ -45,4 +45,13 @@ public class UploadController {
         UploadVO uploadVO = uploadService.upload(file);
         return R.ok(uploadVO);
     }
+
+    /**
+     * 上传商品主图（公开桶，返回可写入 main_image 的稳定 URL）。
+     */
+    @PostMapping(value = "/image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public R<UploadVO> uploadProductImage(@RequestParam("file") MultipartFile file) {
+        log.info("Uploading product image: name={}, size={}", file.getOriginalFilename(), file.getSize());
+        return R.ok(uploadService.uploadProductImage(file));
+    }
 }
