@@ -1,4 +1,4 @@
-spring:
+﻿spring:
   application:
     name: shumamall-gateway
   config:
@@ -21,7 +21,7 @@ spring:
       config:
         server-addr: localhost:8848
         file-extension: yaml
-        # 不能用 public 命名空间：取不到配置的完整原因见 shumamall-comment/bootstrap.yml
+        # 不能用 public 命名空间：须显式 namespace: shumamall，否则 Nacos 3.x 客户端可能拿不到配置
         namespace: shumamall
       discovery:
         server-addr: localhost:8848
@@ -46,7 +46,7 @@ spring:
                 key-resolver: "#{@userOrIpKeyResolver}"
           routes:
             - id: auth-service
-              uri: lb://shumamall-auth
+              uri: lb://shumamall-iam
               predicates:
                 - Path=/api/v1/auth/**
             - id: product-user-service
@@ -82,23 +82,23 @@ spring:
               predicates:
                 - Path=/api/v1/admin/upload/**
             - id: admin-permission-service
-              uri: lb://shumamall-permission
+              uri: lb://shumamall-iam
               predicates:
                 - Path=/api/v1/admin/permission/**
             - id: admin-role-service
-              uri: lb://shumamall-permission
+              uri: lb://shumamall-iam
               predicates:
                 - Path=/api/v1/admin/role/**
             - id: admin-audit-service
-              uri: lb://shumamall-permission
+              uri: lb://shumamall-iam
               predicates:
                 - Path=/api/v1/admin/audit/**
             - id: permission-menus-service
-              uri: lb://shumamall-permission
+              uri: lb://shumamall-iam
               predicates:
                 - Path=/permission/menus
             - id: permission-my-permissions-service
-              uri: lb://shumamall-permission
+              uri: lb://shumamall-iam
               predicates:
                 - Path=/permission/my-permissions
 
@@ -135,11 +135,11 @@ spring:
               predicates:
                 - Path=/api/v1/admin/payment/**
             - id: comment-service
-              uri: lb://shumamall-comment
+              uri: lb://shumamall-product
               predicates:
                 - Path=/api/v1/comment/**
             - id: admin-comment-service
-              uri: lb://shumamall-comment
+              uri: lb://shumamall-product
               predicates:
                 - Path=/api/v1/admin/comment/**
             - id: search-service
@@ -147,11 +147,11 @@ spring:
               predicates:
                 - Path=/api/v1/search/**
             - id: dict-service
-              uri: lb://shumamall-dict
+              uri: lb://shumamall-admin
               predicates:
                 - Path=/api/v1/dict/**
             - id: admin-dict-service
-              uri: lb://shumamall-dict
+              uri: lb://shumamall-admin
               predicates:
                 - Path=/api/v1/admin/dict/**
 

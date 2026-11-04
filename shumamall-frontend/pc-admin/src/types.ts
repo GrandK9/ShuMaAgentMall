@@ -217,7 +217,7 @@ export interface AuditLog {
   costMs?: number;
 }
 
-/* ---------------- 评论（shumamall-comment 8089，管理端） ---------------- */
+/* ---------------- 评论（shumamall-product 8083，管理端） ---------------- */
 
 /** 评论视图对象（GET /api/v1/admin/comment） */
 export interface CommentVO {

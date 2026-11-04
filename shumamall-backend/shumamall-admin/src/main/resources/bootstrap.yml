@@ -1,4 +1,4 @@
-spring:
+﻿spring:
   application:
     name: shumamall-admin
   config:
@@ -11,10 +11,22 @@ spring:
       config:
         server-addr: localhost:8848
         file-extension: yaml
-        # 不能用 public 命名空间：取不到配置的完整原因见 shumamall-comment/bootstrap.yml
+        # 不能用 public 命名空间：须显式 namespace: shumamall，否则 Nacos 3.x 客户端可能拿不到配置
         namespace: shumamall
       discovery:
         server-addr: localhost:8848
+  datasource:
+    url: jdbc:mysql://localhost:3306/shumamall?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&allowMultiQueries=true
+    username: root
+    password: root123
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      id-type: assign_id
 
 server:
   port: 8090

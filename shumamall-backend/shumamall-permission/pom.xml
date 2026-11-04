@@ -58,6 +58,11 @@
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>dynamic-datasource-spring-boot3-starter</artifactId>
+            <optional>true</optional>
+        </dependency>
 
         <!-- MyBatis-Plus JSqlParser（3.5.9+ 分页拦截器需要） -->
         <dependency>
@@ -98,18 +103,22 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <excludes>
+                    <exclude>bootstrap.yml</exclude>
+                    <exclude>application.yml</exclude>
+                </excludes>
+            </resource>
+        </resources>
         <plugins>
-            <!-- 打成可执行 jar（spring-boot-maven-plugin 在父 pom 中仅声明于 pluginManagement，需各模块显式引入） -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <goals>
-                            <goal>repackage</goal>
-                        </goals>
-                    </execution>
-                </executions>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
             </plugin>
         </plugins>
     </build>

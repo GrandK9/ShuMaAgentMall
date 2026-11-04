@@ -1,4 +1,4 @@
-spring:
+﻿spring:
   application:
     name: shumamall-user
   config:
@@ -11,7 +11,7 @@ spring:
       config:
         server-addr: localhost:8848
         file-extension: yaml
-        # 不能用 public 命名空间：取不到配置的完整原因见 shumamall-comment/bootstrap.yml
+        # 不能用 public 命名空间：须显式 namespace: shumamall，否则 Nacos 3.x 客户端可能拿不到配置
         namespace: shumamall
       discovery:
         server-addr: localhost:8848

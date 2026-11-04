@@ -125,7 +125,7 @@ export interface UserInfo {
   status?: number;
 }
 
-/* ---------------- 评论（shumamall-comment） ---------------- */
+/* ---------------- 评论（shumamall-product） ---------------- */
 
 /** 评论 VO（用户端展示） */
 export interface Comment {

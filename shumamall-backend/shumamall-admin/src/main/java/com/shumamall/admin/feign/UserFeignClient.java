@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.GetMapping;
  *
  * @author ShuMaMall Team
  */
-@FeignClient(name = "shumamall-user", path = "/api/v1/internal/user")
+@FeignClient(name = "shumamall-iam", path = "/api/v1/internal/user")
 public interface UserFeignClient {
 
     /**

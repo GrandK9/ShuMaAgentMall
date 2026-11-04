@@ -15,7 +15,7 @@
     <packaging>jar</packaging>
 
     <name>ShuMaMall Comment</name>
-    <description>评论区服务 — MongoDB 文档模型 + 嵌套回复</description>
+    <description>评论模块 — MongoDB 文档模型（由 shumamall-product 聚合启动）</description>
 
     <dependencies>
         <!-- Spring Boot Web -->
@@ -42,28 +42,10 @@
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
-        <!-- Nacos 服务发现 -->
-        <dependency>
-            <groupId>com.alibaba.cloud</groupId>
-            <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
-        </dependency>
-
-        <!-- Nacos 配置中心 -->
-        <dependency>
-            <groupId>com.alibaba.cloud</groupId>
-            <artifactId>spring-cloud-starter-alibaba-nacos-config</artifactId>
-        </dependency>
-
-        <!-- Spring Cloud OpenFeign（服务间调用，拿用户快照） -->
+        <!-- Spring Cloud OpenFeign（调 IAM 拉用户快照；负载均衡由宿主 product 提供） -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-openfeign</artifactId>
-        </dependency>
-
-        <!-- Feign 客户端负载均衡（缺少它时 @FeignClient 启动报 "No Feign Client for loadBalancing defined"） -->
-        <dependency>
-            <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-loadbalancer</artifactId>
         </dependency>
 
         <!-- MyBatis-Plus 核心包（仅复用 IdWorker 雪花 ID，不引入数据源） -->
@@ -91,13 +73,9 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <goals>
-                            <goal>repackage</goal>
-                        </goals>
-                    </execution>
-                </executions>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
             </plugin>
         </plugins>
     </build>

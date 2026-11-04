@@ -1,6 +1,6 @@
-# shumamall-product.yaml —— 商品服务端口与数据源覆盖（Nacos 配置中心）
+# shumamall-product.yaml —— 商品聚合进程（商品 MySQL + 评论 MongoDB）可选覆盖
 # dataId: shumamall-product.yaml / group: DEFAULT_GROUP / namespace: shumamall
-# 由 Nacos Config 按 spring.application.name 自动加载，无需显式 import。
+# 本地 bootstrap 已含默认值；需要统一在配置中心改端口/Mongo 时再发布本文件。
 
 server:
   port: 8083
@@ -10,3 +10,7 @@ spring:
     name: shumamall-product
   datasource:
     url: jdbc:mysql://localhost:3306/shumamall?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&allowMultiQueries=true
+  data:
+    mongodb:
+      uri: mongodb://shumamall:shumamall123@localhost:27017/shumamall?authSource=admin
+      auto-index-creation: true

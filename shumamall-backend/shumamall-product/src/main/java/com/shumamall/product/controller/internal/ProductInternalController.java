@@ -14,7 +14,7 @@ import java.util.List;
  * 商品内部服务控制器（仅微服务间 Feign 调用，不对外开放）。
  */
 @Slf4j
-@Tag(name = "商品-内部接口", description = "微服务间 Feign 调用的商品 SKU 查询、库存扣减恢复及评论数、销量回写接口")
+@Tag(name = "商品-内部接口", description = "微服务间 Feign 调用的商品 SKU 查询、库存扣减恢复及销量回写接口")
 @RestController
 @RequestMapping("/api/v1/internal/product")
 @RequiredArgsConstructor
@@ -73,20 +73,6 @@ public class ProductInternalController {
     public R<Void> restoreStock(@PathVariable Long skuId, @RequestParam Integer quantity) {
         productService.restoreStock(skuId, quantity);
         log.debug("内部调用恢复库存: skuId={}, quantity={}", skuId, quantity);
-        return R.ok();
-    }
-
-    /**
-     * 调整商品评论数（评论区服务发评/删除时回写）。
-     *
-     * @param productId 商品ID
-     * @param delta     增量（发评 +1，删除 -1）
-     * @return 操作结果
-     */
-    @PutMapping("/{productId}/comment-count")
-    public R<Void> updateCommentCount(@PathVariable Long productId, @RequestParam Integer delta) {
-        productService.updateCommentCount(productId, delta);
-        log.debug("内部调用回写评论数: productId={}, delta={}", productId, delta);
         return R.ok();
     }
 

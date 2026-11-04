@@ -1,7 +1,7 @@
 package com.shumamall.auth.service.impl;
 
 import com.shumamall.common.auth.JwtUtils;
-import com.shumamall.auth.dao.UserMapper;
+import com.shumamall.auth.dao.AuthUserMapper;
 import com.shumamall.auth.dto.LoginReqDTO;
 import com.shumamall.auth.dto.LoginRespDTO;
 import com.shumamall.auth.dto.RegisterReqDTO;
@@ -34,7 +34,7 @@ public class AuthServiceImpl implements AuthService {
     @Transactional(rollbackFor = Exception.class)
     public LoginRespDTO register(RegisterReqDTO req) {
         // 检查用户名是否已存在
-        UserEntity existing = userMapper.selectOne(
+        UserEntity existing = authUserMapper.selectOne(
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<UserEntity>()
                         .eq(UserEntity::getUsername, req.getUsername()));
         if (existing != null) {
@@ -54,7 +54,7 @@ public class AuthServiceImpl implements AuthService {
 
         user.setRole("user");
 
-        userMapper.insert(user);
+        authUserMapper.insert(user);
 
         log.info("用户注册成功: userId={}, username={}", user.getId(), user.getUsername());
 
@@ -68,7 +68,7 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public LoginRespDTO login(LoginReqDTO req) {
         // 查询用户
-        UserEntity user = userMapper.selectOne(
+        UserEntity user = authUserMapper.selectOne(
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<UserEntity>()
                         .eq(UserEntity::getUsername, req.getUsername()));
         if (user == null) {

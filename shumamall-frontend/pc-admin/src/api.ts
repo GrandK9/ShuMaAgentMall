@@ -340,7 +340,7 @@ export function queryAuditLogs(query: {
   return request<PageResult<AuditLog>>(`${AUDIT_BASE}/logs?${params.toString()}`);
 }
 
-/* ---------------- 评论（comment 8089） ---------------- */
+/* ---------------- 评论（product 8083） ---------------- */
 
 /** 评论分页查询（可按商品 / 状态过滤）；status：0-正常 1-作者删除 2-管理员隐藏 */
 export function getCommentPage(query: { page?: number; size?: number; productId?: number; status?: number } = {}): Promise<PageResult<CommentVO>> {

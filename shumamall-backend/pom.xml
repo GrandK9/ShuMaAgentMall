@@ -17,6 +17,7 @@
         <module>shumamall-gateway</module>
         <module>shumamall-auth</module>
         <module>shumamall-user</module>
+        <module>shumamall-iam</module>
         <module>shumamall-product</module>
         <module>shumamall-permission</module>
         <module>shumamall-admin</module>
@@ -103,6 +104,11 @@
                 <version>${mybatis-plus.version}</version>
             </dependency>
 
+            <dependency>
+                <groupId>com.baomidou</groupId>
+                <artifactId>dynamic-datasource-spring-boot3-starter</artifactId>
+                <version>${dynamic-datasource.version}</version>
+            </dependency>
             <!-- JJWT -->
             <dependency>
                 <groupId>io.jsonwebtoken</groupId>

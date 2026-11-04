@@ -12,7 +12,7 @@ import java.util.Set;
  * <p>
  * 供其他微服务（如 shumamall-auth）调用，用于权限校验和缓存查询。
  */
-@FeignClient(name = "shumamall-permission", path = "/api/permission/internal")
+@FeignClient(name = "shumamall-iam", path = "/api/permission/internal")
 public interface PermissionApi {
 
     /**

@@ -9,8 +9,8 @@ import com.shumamall.comment.dto.UserInfoDTO;
 import com.shumamall.comment.entity.CommentDocument;
 import com.shumamall.comment.entity.CommentLikeDocument;
 import com.shumamall.comment.entity.CommentReportDocument;
-import com.shumamall.comment.feign.ProductFeignClient;
 import com.shumamall.comment.feign.UserFeignClient;
+import com.shumamall.comment.spi.ProductCommentCounter;
 import com.shumamall.comment.service.CommentService;
 import com.shumamall.common.auth.SecurityContext;
 import com.shumamall.common.cache.UserBriefCache;
@@ -83,7 +83,7 @@ public class CommentServiceImpl implements CommentService {
     private final MongoTemplate mongoTemplate;
     private final StringRedisTemplate stringRedisTemplate;
     private final UserFeignClient userFeignClient;
-    private final ProductFeignClient productFeignClient;
+    private final ProductCommentCounter productCommentCounter;
 
     @Override
     public PageResult<CommentVO> pageRootComments(Long productId, int page, int size, String sortBy) {
@@ -466,16 +466,14 @@ public class CommentServiceImpl implements CommentService {
     }
 
     /**
-     * 回写商品评论数（Feign 调 product 服务）。
-     * <p>
-     * 失败兜底已下沉到 {@code ProductFeignFallbackFactory}（超时/熔断/报错统一记警告日志并返回降级结果），
-     * 因此此处不再需要 try/catch。
-     *
-     * @param productId 商品 ID
-     * @param delta     增量（发评/回复 +1，删除 -1）
+     * 回写商品冗余评论数（与商品同进程时为本地调用）。
      */
     private void syncCommentCount(Long productId, int delta) {
-        productFeignClient.updateCommentCount(productId, delta);
+        try {
+            productCommentCounter.updateCommentCount(productId, delta);
+        } catch (Exception ex) {
+            log.warn("回写商品评论数失败，已跳过: productId={}, delta={}", productId, delta, ex);
+        }
     }
 
     /**

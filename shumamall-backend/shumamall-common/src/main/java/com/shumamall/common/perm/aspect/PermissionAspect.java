@@ -214,7 +214,7 @@ public class PermissionAspect {
      */
     private Set<String> getUserPermissions(Long userId) {
         try {
-            List<ServiceInstance> instances = discoveryClient.getInstances("shumamall-permission");
+            List<ServiceInstance> instances = discoveryClient.getInstances("shumamall-iam");
             if (instances == null || instances.isEmpty()) {
                 log.warn("permission 服务不可用，跳过权限校验");
                 return Collections.emptySet();

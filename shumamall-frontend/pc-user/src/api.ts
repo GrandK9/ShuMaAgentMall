@@ -145,7 +145,7 @@ export function getCategoryTree(): Promise<Category[]> {
   return request<Category[]>(`${CATEGORY_BASE}/tree`);
 }
 
-/* ---------------- 评论（comment 8089） ---------------- */
+/* ---------------- 评论（product 8083） ---------------- */
 
 const COMMENT_BASE = '/api/v1/comment';
 

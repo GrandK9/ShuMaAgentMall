@@ -18,18 +18,16 @@
 | 模块 | 端口 | 职责 |
 |---|---|---|
 | shumamall-gateway | 8080 | 统一网关：路由转发、限流、客户端 IP 透传 |
-| shumamall-auth | 8081 | JWT 登录认证 |
-| shumamall-user | 8082 | 用户与收货地址（敏感字段加密存储） |
-| shumamall-product | 8083 | 商品 / 分类 / 品牌 / SKU，读缓存三防 |
+| shumamall-iam | 8081 | 认证 + 用户 + RBAC/审计（原 auth / user / permission） |
+| shumamall-product | 8083 | 商品 / 分类 / 品牌 / SKU + 评论区（MongoDB） |
 | shumamall-order | 8084 | 购物车与订单，状态机 |
 | shumamall-payment | 8085 | 支付与退款 |
-| shumamall-permission | 8086 | RBAC 权限与操作审计 |
 | shumamall-search | 8087 | ES 全文检索（IK 中文分词） |
 | shumamall-agent | 8088 | AI 导购：混合检索 + 工具调用 + 流式回复 |
-| shumamall-comment | 8089 | 评论区（MongoDB） |
-| shumamall-admin | 8090 | 管理端接口 |
+| shumamall-admin | 8090 | 管理端聚合 + 系统码表（原 dict） |
 | shumamall-video | 8092 | 视频上传、HLS 切片与播放 |
-| shumamall-dict | 8093 | 数据字典 |
+
+Maven 仍保留 `shumamall-auth`、`shumamall-user`、`shumamall-permission`、`shumamall-dict`、`shumamall-comment` 模块 jar，由对应聚合进程合并启动。
 
 ## 主要特性
 
@@ -44,12 +42,12 @@
 - **安全**：JWT 认证、敏感字段 AES 加密、请求签名与防重放、网关用户维度限流
 - **接口文档**：每个业务服务集成 springdoc，自带 Swagger UI 与 OpenAPI JSON
 - **视频**：分片上传、ffprobe 校验、FFmpeg HLS 切片、签名播放与断点续播
-- **容错**：Feign 统一 connect 2s / read 5s（默认 read 60s 会把调用方线程拖死）+ Resilience4j 熔断（最近 10 次滑窗、失败率 50% 开路、10s 后自动半开）；关键写路径 fail-closed 不降级（下单扣库存宁可显式失败也不吞异常，避免超卖），仅评论数回写等非关键路径配降级兜底；并禁用熔断的线程池隔离，避免 traceId / Seata XID 等 ThreadLocal 跨线程丢失
+- **容错**：Feign 统一 connect 2s / read 5s（默认 read 60s 会把调用方线程拖死）+ Resilience4j 熔断（最近 10 次滑窗、失败率 50% 开路、10s 后自动半开）；关键写路径 fail-closed 不降级（下单扣库存宁可显式失败也不吞异常，避免超卖）；评论数回写为同进程本地调用，失败仅记日志；并禁用熔断的线程池隔离，避免 traceId / Seata XID 等 ThreadLocal 跨线程丢失
 
 ## 项目结构
 
 ```
-shumamall-backend/        Maven 多模块后端（网关 + 13 个服务）
+shumamall-backend/        Maven 多模块后端（网关 + 9 个可部署进程）
 shumamall-frontend/       pc-user 用户端 / pc-admin 管理端
 nacos-config/             Nacos 配置模板与发布脚本
 mysql-init/ mongo-init/   数据库初始化脚本
@@ -79,7 +77,7 @@ cd shumamall-frontend/pc-user && npm i && npm run dev
 
 ### 方式二：容器化部署（一个 Dockerfile 构建全部服务）
 
-后端只有一个通用 Dockerfile，用 `--build-arg MODULE` 指定模块，13 个服务共用同一份构建逻辑。
+后端只有一个通用 Dockerfile，用 `--build-arg MODULE` 指定模块，9 个可部署进程共用同一份构建逻辑。
 
 ```bash
 # 基础设施（应用容器要靠 shumamall-net 网络找 mysql / redis / ...）
@@ -92,7 +90,7 @@ docker compose -f docker-compose.app.yml --profile core up -d --build
 # 再加搜索链路（需要基础设施里的 elasticsearch、rabbitmq）
 docker compose -f docker-compose.app.yml --profile core --profile search up -d --build
 
-# 全量 13 个服务
+# 全量 9 个服务
 docker compose -f docker-compose.app.yml --profile all up -d --build
 
 # 改完代码只重建受影响的镜像
@@ -100,7 +98,7 @@ docker compose -f docker-compose.app.yml --profile core build order payment
 docker compose -f docker-compose.app.yml --profile core up -d --no-deps order
 ```
 
-profile 划分：`core`（下单主链路）、`search`、`agent`、`admin`（权限/管理端/视频/字典）、`comment`、`all`。
+profile 划分：`core`（下单主链路，含商品/评论）、`search`、`agent`、`admin`（管理端/视频/字典）、`all`。
 完整命令与端口对照见 `docker-compose.app.yml` 头部注释。
 
 ### 接口文档

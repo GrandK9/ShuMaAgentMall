@@ -24,8 +24,8 @@ spring:
     openfeign:
       # 开启熔断：Feign 调用统一走 Resilience4j 断路器（CLOSED→OPEN→HALF_OPEN，
       # 参数见下方 resilience4j.circuitbreaker），对所有 @FeignClient 生效。
-      # 注意降级范围：只有 comment 的 UserFeignClient / ProductFeignClient 配了 fallbackFactory；
-      # 未配的客户端开路时抛 CallNotPermittedException / NoFallbackAvailableException，
+      # 注意降级范围：商品进程内 comment 模块的 UserFeignClient 配了 fallbackFactory（拉用户快照）；
+      # 评论数回写已改为同进程本地调用。未配 fallback 的客户端开路时抛 CallNotPermittedException，
       # 由调用方 catch 转业务错误码。关键写路径（下单扣库存、支付回调订单）刻意不降级，理由见各类注释。
       circuitbreaker:
         enabled: true

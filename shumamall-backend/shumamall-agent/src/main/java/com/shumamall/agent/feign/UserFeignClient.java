@@ -11,7 +11,7 @@ import java.util.List;
 /**
  * 用户服务 Feign 客户端（shumamall-user 用户端接口，需携带 JWT 透传 userId）。
  */
-@FeignClient(name = "shumamall-user")
+@FeignClient(name = "shumamall-iam")
 public interface UserFeignClient {
 
     /**

@@ -31,13 +31,13 @@ export default defineConfig({
         target: 'http://127.0.0.1:8083',
         changeOrigin: true,
       },
-      // user 服务（8082）：地址（先于 /api/v1/user 匹配）
+      // IAM（8081）：用户与地址（先于 /api/v1/user/product 之外的 /api/v1/user 匹配）
       '/api/v1/user/address': {
-        target: 'http://127.0.0.1:8082',
+        target: 'http://127.0.0.1:8081',
         changeOrigin: true,
       },
       '/api/v1/user': {
-        target: 'http://127.0.0.1:8082',
+        target: 'http://127.0.0.1:8081',
         changeOrigin: true,
       },
       // order 服务（8084）：购物车 + 订单
@@ -54,9 +54,9 @@ export default defineConfig({
         target: 'http://127.0.0.1:8085',
         changeOrigin: true,
       },
-      // comment 服务（8089）：热门评论等
+      // 评论已并入商品服务（8083）
       '/api/v1/comment': {
-        target: 'http://127.0.0.1:8089',
+        target: 'http://127.0.0.1:8083',
         changeOrigin: true,
       },
       // video 服务（8092）：播放签名 URL + 播放进度（断点续播）

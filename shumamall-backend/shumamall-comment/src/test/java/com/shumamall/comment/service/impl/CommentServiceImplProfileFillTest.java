@@ -2,8 +2,8 @@ package com.shumamall.comment.service.impl;
 
 import com.shumamall.comment.dto.UserInfoDTO;
 import com.shumamall.comment.entity.CommentDocument;
-import com.shumamall.comment.feign.ProductFeignClient;
 import com.shumamall.comment.feign.UserFeignClient;
+import com.shumamall.comment.spi.ProductCommentCounter;
 import com.shumamall.common.result.R;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,14 +41,14 @@ class CommentServiceImplProfileFillTest {
     @Mock
     private UserFeignClient userFeignClient;
     @Mock
-    private ProductFeignClient productFeignClient;
+    private ProductCommentCounter productCommentCounter;
 
     private CommentServiceImpl service;
 
     @BeforeEach
     void setUp() {
         when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
-        service = new CommentServiceImpl(mongoTemplate, stringRedisTemplate, userFeignClient, productFeignClient);
+        service = new CommentServiceImpl(mongoTemplate, stringRedisTemplate, userFeignClient, productCommentCounter);
     }
 
     @Test

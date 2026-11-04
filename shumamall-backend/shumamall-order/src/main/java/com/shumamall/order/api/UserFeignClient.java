@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 /**
  * 用户服务 Feign 客户端。
  */
-@FeignClient("shumamall-user")
+@FeignClient("shumamall-iam")
 public interface UserFeignClient {
 
     /**

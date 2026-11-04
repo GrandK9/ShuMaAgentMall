@@ -47,7 +47,7 @@
             因此各服务无需再加暴露配置，也不用改鉴权白名单
             （TokenFilter 只挂在 /api/v1/** 上，本来就不拦 /actuator/**）。
 
-            放在 common 里与 resilience4j 同理：13 个服务行为一致，不必逐个 pom 维护。
+            放在 common 里与 resilience4j 同理：各可部署进程行为一致，不必逐个 pom 维护。
         -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

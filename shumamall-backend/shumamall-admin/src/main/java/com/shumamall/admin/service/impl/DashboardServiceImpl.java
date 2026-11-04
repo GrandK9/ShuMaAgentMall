@@ -41,7 +41,7 @@ public class DashboardServiceImpl implements DashboardService {
      */
     @Override
     public DashboardVO getDashboard() {
-        Long totalUsers = safeCallLong("shumamall-user", () -> {
+        Long totalUsers = safeCallLong("shumamall-iam", () -> {
             R<Long> resp = userFeignClient.countUsers();
             return resp != null ? resp.getData() : null;
         });

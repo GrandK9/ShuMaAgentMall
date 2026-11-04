@@ -9,16 +9,13 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
- * Web MVC 配置。
- * <p>
- * 注册 {@link TokenFilter}，拦截所有 {@code /api/v1/user/**} 请求，
- * 校验 JWT token 并将 userId 写入 {@link com.shumamall.common.auth.SecurityContext}。
+ * 用户模块 Web MVC：C 端用户接口 JWT 校验。
  */
 @Configuration
-public class WebMvcConfig implements WebMvcConfigurer {
+public class UserWebMvcConfig implements WebMvcConfigurer {
 
     @Bean
-    public FilterRegistrationBean<Filter> tokenFilter(JwtUtils jwtUtils) {
+    public FilterRegistrationBean<Filter> userTokenFilter(JwtUtils jwtUtils) {
         FilterRegistrationBean<Filter> registration = new FilterRegistrationBean<>();
         registration.setFilter(new TokenFilter(jwtUtils));
         registration.addUrlPatterns("/api/v1/user/*");

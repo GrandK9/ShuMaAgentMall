@@ -1,0 +1,45 @@
+﻿spring:
+  application:
+    name: shumamall-iam
+  config:
+    import:
+      - optional:nacos:shumamall-common.yaml
+  cloud:
+    nacos:
+      config:
+        server-addr: localhost:8848
+        file-extension: yaml
+        namespace: shumamall
+      discovery:
+        server-addr: localhost:8848
+  datasource:
+    dynamic:
+      primary: master
+      strict: false
+      datasource:
+        master:
+          url: jdbc:mysql://localhost:3306/shumamall?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&allowMultiQueries=true
+          username: root
+          password: root123
+          driver-class-name: com.mysql.cj.jdbc.Driver
+        perm:
+          url: jdbc:mysql://localhost:3306/shumamall_perm?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&allowMultiQueries=true
+          username: root
+          password: root123
+          driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      id-type: assign_id
+  mapper-locations: classpath*:/mapper/**/*.xml
+
+server:
+  port: 8081

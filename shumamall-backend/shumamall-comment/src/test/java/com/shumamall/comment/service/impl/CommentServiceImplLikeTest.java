@@ -4,8 +4,8 @@ import com.mongodb.client.result.DeleteResult;
 import com.shumamall.comment.entity.CommentDocument;
 import com.shumamall.comment.entity.CommentLikeDocument;
 import com.shumamall.comment.entity.CommentReportDocument;
-import com.shumamall.comment.feign.ProductFeignClient;
 import com.shumamall.comment.feign.UserFeignClient;
+import com.shumamall.comment.spi.ProductCommentCounter;
 import com.shumamall.common.auth.SecurityContext;
 import com.shumamall.common.exception.BusinessException;
 import com.shumamall.common.result.R;
@@ -59,7 +59,7 @@ class CommentServiceImplLikeTest {
     @BeforeEach
     void setUp() {
         lenient().when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
-        service = new CommentServiceImpl(mongoTemplate, stringRedisTemplate, userFeignClient, productFeignClient);
+        service = new CommentServiceImpl(mongoTemplate, stringRedisTemplate, userFeignClient, productCommentCounter);
     }
 
     @AfterEach

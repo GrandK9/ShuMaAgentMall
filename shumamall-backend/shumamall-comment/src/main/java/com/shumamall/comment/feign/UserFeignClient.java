@@ -16,7 +16,7 @@ import java.util.List;
  * 评论列表只存用户 ID，返回前按本页出现的 ID 批量取当前昵称和头像。
  * 内部接口路径 {@code /api/v1/internal/user} 不经过 user 服务 TokenFilter。
  */
-@FeignClient(name = "shumamall-user", path = "/api/v1/internal/user",
+@FeignClient(name = "shumamall-iam", path = "/api/v1/internal/user",
         fallbackFactory = UserFeignFallbackFactory.class)
 public interface UserFeignClient {
 

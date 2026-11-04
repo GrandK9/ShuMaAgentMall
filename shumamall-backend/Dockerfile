@@ -3,14 +3,14 @@
 # =============================================================================
 # ShuMaMall 后端通用镜像构建文件（多阶段构建）
 #
-# 一个 Dockerfile 构建全部 13 个服务，用 --build-arg MODULE 指定要打哪个模块：
+# 一个 Dockerfile 构建全部 9 个可部署进程，用 --build-arg MODULE 指定要打哪个模块：
 #   docker build -t shumamall/product:1.0.0 --build-arg MODULE=shumamall-product --build-arg PORT=8083 -f Dockerfile .
 #
 # 「按需构建、按需启动子集」的编排与命令见仓库根目录的 docker-compose.app.yml。
 #
 # 为什么用「通用 Dockerfile + 参数」而不是每个模块一份 Dockerfile：
-# 13 个服务只有模块名和端口不同。复制 13 份内容雷同的构建脚本，任何一处调整
-# （换基础镜像、改 JVM 参数）都要同步 13 个文件，漏一个就出现行为不一致的镜像。
+# 各进程只有模块名和端口不同。复制多份内容雷同的构建脚本，任何一处调整
+# （换基础镜像、改 JVM 参数）都要同步多个文件，漏一个就出现行为不一致的镜像。
 # =============================================================================
 
 ARG MODULE=shumamall-product

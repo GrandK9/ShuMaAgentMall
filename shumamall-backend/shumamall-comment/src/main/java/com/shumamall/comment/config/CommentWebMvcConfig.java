@@ -9,17 +9,13 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
- * Web MVC 配置。
- * <p>
- * 注册 {@link OptionalAuthFilter}，拦截用户端评论接口：
- * 带 token 则解析用户身份写入 SecurityContext，未带则放行（匿名可查询）。
- * 管理端接口 /api/v1/admin/comment/** 不拦截（与其他管理端接口一致）。
+ * 评论模块 Web MVC：用户端可选登录过滤器。
  */
 @Configuration
-public class WebMvcConfig implements WebMvcConfigurer {
+public class CommentWebMvcConfig implements WebMvcConfigurer {
 
     @Bean
-    public FilterRegistrationBean<Filter> optionalAuthFilter(JwtUtils jwtUtils) {
+    public FilterRegistrationBean<Filter> commentOptionalAuthFilter(JwtUtils jwtUtils) {
         FilterRegistrationBean<Filter> registration = new FilterRegistrationBean<>();
         registration.setFilter(new OptionalAuthFilter(jwtUtils));
         registration.addUrlPatterns("/api/v1/comment/*");

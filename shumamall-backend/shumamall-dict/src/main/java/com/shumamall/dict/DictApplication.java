@@ -1,15 +1,10 @@
 package com.shumamall.dict;
 
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-
 /**
- * 码表服务启动类。
+ * 码表模块占位类。可执行入口已合并至 {@code com.shumamall.admin.AdminApplication}。
  */
-@SpringBootApplication
-public class DictApplication {
+public final class DictApplication {
 
-    public static void main(String[] args) {
-        SpringApplication.run(DictApplication.class, args);
+    private DictApplication() {
     }
 }

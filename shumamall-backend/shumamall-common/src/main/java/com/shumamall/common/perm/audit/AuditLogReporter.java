@@ -49,7 +49,7 @@ public class AuditLogReporter {
     private static final String AUDIT_PATH = "/api/permission/internal/audit";
 
     /** 目标服务名 */
-    private static final String PERMISSION_SERVICE = "shumamall-permission";
+    private static final String PERMISSION_SERVICE = "shumamall-iam";
 
     /** 队列容量：够扛住一次管理端批量操作，超出即丢弃（避免堆积吃内存） */
     private static final int QUEUE_CAPACITY = 1000;

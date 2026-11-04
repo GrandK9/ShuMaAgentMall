@@ -1,11 +1,11 @@
 # =============================================================================
-# 应用层编排：13 个后端微服务
+# 应用层编排：9 个后端微服务（auth/user/permission→iam；dict→admin；comment→product）
 #
 # 与 docker-compose.yml（基础设施）分开的两个理由：
 #   1. 基础设施启动一次长期复用，应用服务要按功能子集反复重建，混在一起每次
 #      重启应用都会连带重启数据库；
 #   2. 分开后可以「只构建/只启动我要验的那几个服务」，不必为改一行订单代码
-#      把 13 个镜像全打一遍。
+#      把 9 个镜像全打一遍。
 #
 # -----------------------------------------------------------------------------
 # 前置：先起基础设施（必须先起，应用容器要靠 shumamall-net 网络找 mysql/redis/...）
@@ -30,10 +30,9 @@
 #   后台管理相关：权限 + 管理端 + 视频 + 字典
 #     docker compose -f docker-compose.app.yml --profile admin up -d --build
 #
-#   评论/弹幕：依赖 MySQL + MongoDB + Redis
-#     docker compose -f docker-compose.app.yml --profile comment up -d --build
+#   评论 API 随商品服务（8083）一起起，需基础设施 MongoDB
 #
-#   全量 13 个服务
+#   全量 9 个服务
 #     docker compose -f docker-compose.app.yml --profile all up -d --build
 #
 # -----------------------------------------------------------------------------
@@ -166,8 +165,8 @@ services:
       SPRING_DATASOURCE_URL: *ds-shumamall
 
   # ========================= 用户 =========================
-  user:
-    <<: *app-base
+  # ========================= 商品 + 评论 =========================
+  # 商品变更事件的生产者（RabbitMQ），Seata 分支事务参与方；评论存 MongoDB
     profiles: [core, all]
     image: shumamall/user:1.0.0
     build:
@@ -275,25 +274,6 @@ services:
       SPRING_DATASOURCE_URL: *ds-shumamall-perm
 
   # ========================= 搜索 =========================
-  # 消费商品变更消息写入 ES；ES 与 RabbitMQ 必须先起
-  search:
-    <<: *app-base
-    profiles: [search, all]
-    image: shumamall/search:1.0.0
-    build:
-      context: ./shumamall-backend
-      dockerfile: Dockerfile
-      args:
-        MODULE: shumamall-search
-        PORT: 8087
-    ports:
-      - "8087:8087"
-    healthcheck:
-      <<: *healthcheck-base
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8087/actuator/health/liveness || exit 1"]
-    environment:
-      <<: *common-env
-
   # ========================= AI 导购 =========================
   # 依赖 ES 检索 + RabbitMQ 索引同步；DeepSeek / 向量模型密钥由 Nacos 下发
   agent:
@@ -313,50 +293,31 @@ services:
       <<: *healthcheck-base
       test: ["CMD-SHELL", "curl -fsS http://localhost:8088/actuator/health/liveness || exit 1"]
     environment:
-      <<: *common-env
-
-  # ========================= 评论/弹幕 =========================
-  comment:
-    <<: *app-base
-    profiles: [comment, all]
-    image: shumamall/comment:1.0.0
-    build:
-      context: ./shumamall-backend
-      dockerfile: Dockerfile
-      args:
-        MODULE: shumamall-comment
-        PORT: 8089
-    ports:
-      - "8089:8089"
-    healthcheck:
-      <<: *healthcheck-base
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8089/actuator/health/liveness || exit 1"]
-    environment:
-      <<: *common-env
-
-  # ========================= 管理端 =========================
-  # 文件上传走 MinIO
-  admin:
-    <<: *app-base
-    profiles: [admin, all]
-    image: shumamall/admin:1.0.0
-    build:
-      context: ./shumamall-backend
-      dockerfile: Dockerfile
-      args:
-        MODULE: shumamall-admin
-        PORT: 8090
-    ports:
-      - "8090:8090"
-    healthcheck:
-      <<: *healthcheck-base
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8090/actuator/health/liveness || exit 1"]
-    environment:
-      <<: *common-env
+      SPRING_DATASOURCE_URL: *ds-shumamall
 
   # ========================= 视频 =========================
   video:
     <<: *app-base
+    profiles: [admin, all]
+    image: shumamall/video:1.0.0
+    mem_limit: 768m
+    build:
+      context: ./shumamall-backend
+      dockerfile: Dockerfile
+      args:
+        MODULE: shumamall-video
+        PORT: 8092
+    ports:
+      - "8092:8092"
+    healthcheck:
+      <<: *healthcheck-base
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8092/actuator/health/liveness || exit 1"]
+    environment:
+      <<: *common-env
+      # 视频元数据单独一个 MongoDB 库
+      SPRING_DATA_MONGODB_URI: mongodb://shumamall:shumamall123@mongo:27017/shumamall_video?authSource=admin
+      # 预签名 URL Host 为本机 localhost:9000；容器内 SDK 经 OkHttp 转发到 minio:9000 再签名
+      MINIO_PUBLIC_ENDPOINT: http://localhost:9000
     profiles: [admin, all]
     image: shumamall/video:1.0.0
     mem_limit: 768m
