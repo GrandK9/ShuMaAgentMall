@@ -63,7 +63,8 @@ INSERT INTO perm_permission (id, code, name, type, path_prefix, parent_id, sort_
 -- comment:view / search:view：pc-admin 新增「评论管理」「搜索索引管理」两页。
 -- 菜单树接口只返回 type=0 的权限点，不补这两行侧边栏就没有入口（页面本身可直达）。
 (30, 'comment:view',      '评论管理',  0, '/admin/comment/**',  0, 12, 1),
-(31, 'search:view',       '搜索索引',  0, '/api/v1/search/**',  0, 13, 1);
+(31, 'search:view',       '搜索索引',  0, '/api/v1/search/**',  0, 13, 1),
+(32, 'dict:view',         '码表管理',  0, '/admin/dict/**',     0, 14, 1);
 
 -- ----------------------------
 -- 2. 角色
