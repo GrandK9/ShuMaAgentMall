@@ -31,6 +31,31 @@ const heroProduct = computed(() => hotProducts.value[0] ?? null);
 const homeMotionEnabled = ref(false);
 /** 榜首 hero 入场（数据到位后再播，避免空白闪烁） */
 const heroMotionPlay = ref(false);
+/** 当前 hero 是否已排程入场（避免 @load 与缓存检测重复触发） */
+let heroMotionPendingId: number | null = null;
+let heroMotionToken = 0;
+
+function runHeroMotion(): void {
+  const token = ++heroMotionToken;
+  heroMotionPlay.value = false;
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      if (token !== heroMotionToken) return;
+      heroMotionPlay.value = true;
+    });
+  });
+}
+
+function tryPlayHeroMotion(): void {
+  const id = heroMotionPendingId;
+  if (id == null || heroProduct.value?.id !== id) return;
+  heroMotionPendingId = null;
+  runHeroMotion();
+}
+
+function onHeroImageLoad(): void {
+  tryPlayHeroMotion();
+}
 let sectionRevealObserver: IntersectionObserver | null = null;
 let productTileObserver: IntersectionObserver | null = null;
 
@@ -245,11 +270,16 @@ watch(
   heroProduct,
   (p) => {
     heroMotionPlay.value = false;
+    heroMotionPendingId = p?.id ?? null;
     if (!p) return;
+    if (!p.mainImage) {
+      tryPlayHeroMotion();
+      return;
+    }
+    // 有主图时等 @load；缓存命中则在 DOM 更新后补播
     void nextTick(() => {
-      requestAnimationFrame(() => {
-        heroMotionPlay.value = true;
-      });
+      const img = document.querySelector('.catalog-hero .hero-bg-img') as HTMLImageElement | null;
+      if (img?.complete && img.naturalWidth > 0) tryPlayHeroMotion();
     });
   },
   { immediate: true }
@@ -288,7 +318,7 @@ onUnmounted(() => {
 
 <template>
   <div class="home-page" :class="{ 'home-motion': homeMotionEnabled }" v-loading="loading">
-    <div class="search-bar">
+    <div class="search-bar page-chrome-rise">
       <el-input v-model="keyword" placeholder="搜索商品" clearable @keyup.enter="onSearch" style="width: 360px;" />
       <el-button type="primary" @click="onSearch">搜索</el-button>
       <el-radio-group v-model="sortBy" @change="load(1)" style="margin-left: auto;">
@@ -312,16 +342,13 @@ onUnmounted(() => {
         'hero-motion--play': heroMotionPlay,
       }"
     >
-      <div
-        class="hero-media hero-shutter"
-        :class="{ 'hero-shutter--in': heroMotionPlay }"
-        aria-hidden="true"
-      >
+      <div class="hero-media hero-shutter" aria-hidden="true">
         <img
           v-if="heroProduct.mainImage"
           class="hero-bg-img"
           :src="heroProduct.mainImage"
           alt=""
+          @load="onHeroImageLoad"
         />
         <div v-else class="hero-bg-fallback" />
         <div class="hero-scrim" />
@@ -350,7 +377,7 @@ onUnmounted(() => {
           v-for="(p, idx) in hotProducts.slice(1)"
           :key="p.id"
           class="hot-tile"
-          :style="{ '--delay': `${100 + idx * 70}ms` }"
+          :style="{ '--delay': `${90 + idx * 70}ms` }"
           @click="goDetail(p)"
         >
           <span class="hot-rank motion-hot-part">{{ idx + 2 }}</span>
@@ -380,7 +407,7 @@ onUnmounted(() => {
           v-for="(c, idx) in hotComments"
           :key="c.id"
           class="hot-comment motion-rise"
-          :style="{ '--delay': `${120 + idx * 60}ms` }"
+          :style="{ '--delay': `${90 + idx * 70}ms` }"
           @click="goProductDetail(c.productId)"
         >
           <span class="hot-comment-user">{{ c.username || `用户${c.userId ?? ''}` }}</span>
@@ -501,6 +528,10 @@ onUnmounted(() => {
   z-index: 0;
 }
 
+.hero-shutter {
+  overflow: hidden;
+}
+
 .hero-bg-img {
   width: 100%;
   height: 100%;
@@ -579,34 +610,65 @@ onUnmounted(() => {
   }
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .hero-motion--play .hero-shutter {
+@keyframes hero-shutter-open {
+  from {
     clip-path: inset(0 0 100% 0);
-    transition: clip-path var(--t-open) cubic-bezier(0.76, 0, 0.24, 1);
   }
-  .hero-motion--play .hero-shutter--in {
+  to {
     clip-path: inset(0);
+  }
+}
+
+@keyframes hero-bg-settle {
+  from {
+    transform: scale(1.12);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+@keyframes hero-bg-drift {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.035);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .home-motion .page-chrome-rise {
+    animation: home-rise calc(var(--t-reveal) * 0.85) var(--ease-out) both;
+  }
+
+  .hero-motion--play .hero-shutter {
+    animation: hero-shutter-open var(--t-open) var(--ease-shutter) both;
   }
   .hero-motion--play .hero-shutter .hero-bg-img,
   .hero-motion--play .hero-shutter .hero-bg-fallback {
-    transform: scale(1.1);
-    transition: transform calc(var(--t-open) + 200ms) var(--ease-soft);
-  }
-  .hero-motion--play .hero-shutter--in .hero-bg-img,
-  .hero-motion--play .hero-shutter--in .hero-bg-fallback {
-    transform: none;
+    animation:
+      hero-bg-settle calc(var(--t-open) + 200ms) var(--ease-soft) both,
+      hero-bg-drift var(--t-drift) var(--ease-soft) calc(var(--t-open) + 200ms) infinite alternate;
   }
 
-  .hero-motion--play .hero-rise {
+  .hero-motion--play .hero-title.hero-rise {
     opacity: 0;
     transform: translateY(28px);
     animation: home-rise var(--t-reveal) var(--ease-out) forwards;
+    animation-delay: var(--hero-copy-lead);
   }
   .hero-motion--play .hero-rise--1 {
-    animation-delay: var(--stagger-line);
+    opacity: 0;
+    transform: translateY(28px);
+    animation: home-rise var(--t-reveal) var(--ease-out) forwards;
+    animation-delay: calc(var(--hero-copy-lead) + var(--stagger-line));
   }
   .hero-motion--play .hero-rise--2 {
-    animation-delay: calc(var(--stagger-line) * 2);
+    opacity: 0;
+    transform: translateY(28px);
+    animation: home-rise var(--t-reveal) var(--ease-out) forwards;
+    animation-delay: calc(var(--hero-copy-lead) + var(--stagger-line) * 2);
   }
 
   .hero-cta {
@@ -621,7 +683,7 @@ onUnmounted(() => {
     transform: translateY(22px);
   }
   .home-motion .motion-section.is-revealed .motion-rise {
-    animation: home-rise 720ms var(--ease-out) both;
+    animation: home-rise var(--t-reveal) var(--ease-out) both;
     animation-delay: var(--delay, 0ms);
   }
   .home-motion .motion-section.is-revealed .section-title.motion-rise {
@@ -630,24 +692,24 @@ onUnmounted(() => {
 
   .home-motion .product-tile.scroll-rise:not(.is-in-view) {
     opacity: 0;
-    transform: translate3d(0, 32px, 0);
+    transform: translate3d(0, 28px, 0);
   }
   .home-motion .product-tile.scroll-rise.is-in-view {
-    animation: tile-scroll-rise 720ms var(--ease-out) both;
+    animation: tile-scroll-rise var(--t-reveal) var(--ease-out) both;
     animation-delay: var(--delay, 0ms);
   }
 
   .home-motion .motion-section:not(.is-revealed) .motion-hot-part {
     opacity: 0;
-    transform: translateY(18px);
+    transform: translateY(28px);
   }
   .home-motion .motion-section.is-revealed .motion-hot-part {
-    animation: home-rise 680ms var(--ease-out) both;
+    animation: home-rise var(--t-reveal) var(--ease-out) both;
     animation-delay: var(--delay, 0ms);
   }
   .home-motion .motion-section.is-revealed .motion-hot-part--cover {
     animation-name: hot-cover-in;
-    animation-duration: 760ms;
+    animation-duration: var(--t-reveal);
   }
   .home-motion .motion-section.is-revealed .motion-hot-part--name {
     animation-delay: calc(var(--delay, 0ms) + var(--stagger-item));
@@ -660,7 +722,7 @@ onUnmounted(() => {
 @keyframes tile-scroll-rise {
   from {
     opacity: 0;
-    transform: translate3d(0, 32px, 0);
+    transform: translate3d(0, 28px, 0);
   }
   to {
     opacity: 1;
@@ -671,7 +733,7 @@ onUnmounted(() => {
 @keyframes hot-cover-in {
   from {
     opacity: 0;
-    transform: translateY(20px) scale(1.05);
+    transform: translateY(28px) scale(1.06);
   }
   to {
     opacity: 1;
@@ -756,7 +818,7 @@ onUnmounted(() => {
   object-fit: cover;
   object-position: center;
   transform-origin: center center;
-  transition: transform 520ms var(--ease-soft);
+  transition: transform var(--t-hover) var(--ease-soft);
 }
 .hot-name {
   margin: var(--space-2) 0 0;
@@ -888,7 +950,7 @@ onUnmounted(() => {
   height: 100%;
   object-fit: cover;
   transform-origin: center center;
-  transition: transform 520ms var(--ease-soft);
+  transition: transform var(--t-hover) var(--ease-soft);
 }
 .img-placeholder {
   color: var(--muted);

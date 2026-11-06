@@ -50,8 +50,12 @@
   --t-hover: 180ms;
   --t-reveal: 800ms;
   --t-open: 1200ms;
+  --t-drift: 22s;
   --stagger-line: 90ms;
   --stagger-item: 70ms;
+  --ease-shutter: cubic-bezier(0.76, 0, 0.24, 1);
+  /* 首屏 shutter 揭开后再起文案阶梯 */
+  --hero-copy-lead: 200ms;
 
   --el-color-primary: var(--accent);
   --el-color-primary-light-3: #3a404c;

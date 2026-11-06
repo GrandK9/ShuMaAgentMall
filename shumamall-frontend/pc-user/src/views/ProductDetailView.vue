@@ -623,7 +623,7 @@ onMounted(() => {
   .detail-motion--play .detail-rise {
     opacity: 0;
     transform: translate3d(0, 28px, 0);
-    animation: detail-enter 720ms var(--ease-out) forwards;
+    animation: detail-enter var(--t-reveal) var(--ease-out) forwards;
   }
   .detail-motion--play .detail-rise--0 {
     animation-delay: 0ms;
@@ -653,7 +653,7 @@ onMounted(() => {
     animation-delay: calc(var(--stagger-line) * 6);
   }
   .detail-motion--play .gallery.detail-rise--0 .detail-gallery-img {
-    animation: detail-gallery-in 900ms var(--ease-soft) forwards;
+    animation: detail-gallery-in calc(var(--t-open) + 200ms) var(--ease-soft) forwards;
     animation-delay: 0ms;
   }
 }
