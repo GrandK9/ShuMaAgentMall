@@ -1,5 +1,5 @@
 # =============================================================================
-# 应用层编排：9 个后端微服务（auth/user/permission→iam；dict→admin；comment→product）
+# 应用层编排：网关/认证/用户/商品/订单/支付/权限/管理聚合/搜索/Agent/视频/字典（与 shumamall-backend 各模块对应）
 #
 # 与 docker-compose.yml（基础设施）分开的两个理由：
 #   1. 基础设施启动一次长期复用，应用服务要按功能子集反复重建，混在一起每次
@@ -32,7 +32,7 @@
 #
 #   评论 API 随商品服务（8083）一起起，需基础设施 MongoDB
 #
-#   全量 9 个服务
+#   全量（--profile all，含上述全部应用服务）
 #     docker compose -f docker-compose.app.yml --profile all up -d --build
 #
 # -----------------------------------------------------------------------------
@@ -165,8 +165,8 @@ services:
       SPRING_DATASOURCE_URL: *ds-shumamall
 
   # ========================= 用户 =========================
-  # ========================= 商品 + 评论 =========================
-  # 商品变更事件的生产者（RabbitMQ），Seata 分支事务参与方；评论存 MongoDB
+  user:
+    <<: *app-base
     profiles: [core, all]
     image: shumamall/user:1.0.0
     build:
@@ -184,8 +184,8 @@ services:
       <<: *common-env
       SPRING_DATASOURCE_URL: *ds-shumamall
 
-  # ========================= 商品 =========================
-  # 商品变更事件的生产者（RabbitMQ），并作为 Seata 分支事务参与方
+  # ========================= 商品 + 评论 =========================
+  # 商品变更事件的生产者（RabbitMQ），并作为 Seata 分支事务参与方；评论存 MongoDB
   product:
     <<: *app-base
     profiles: [core, all]
@@ -273,7 +273,46 @@ services:
       <<: *common-env
       SPRING_DATASOURCE_URL: *ds-shumamall-perm
 
-  # ========================= 搜索 =========================
+  # ========================= 管理端聚合（仪表盘、上传等） =========================
+  admin:
+    <<: *app-base
+    profiles: [admin, all]
+    image: shumamall/admin:1.0.0
+    build:
+      context: ./shumamall-backend
+      dockerfile: Dockerfile
+      args:
+        MODULE: shumamall-admin
+        PORT: 8090
+    ports:
+      - "8090:8090"
+    healthcheck:
+      <<: *healthcheck-base
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8090/actuator/health/liveness || exit 1"]
+    environment:
+      <<: *common-env
+      SPRING_DATASOURCE_URL: *ds-shumamall
+      MINIO_PUBLIC_ENDPOINT: http://localhost:9000
+
+  # ========================= 搜索（ES 商品检索） =========================
+  search:
+    <<: *app-base
+    profiles: [search, all]
+    image: shumamall/search:1.0.0
+    build:
+      context: ./shumamall-backend
+      dockerfile: Dockerfile
+      args:
+        MODULE: shumamall-search
+        PORT: 8087
+    ports:
+      - "8087:8087"
+    healthcheck:
+      <<: *healthcheck-base
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8087/actuator/health/liveness || exit 1"]
+    environment:
+      <<: *common-env
+
   # ========================= AI 导购 =========================
   # 依赖 ES 检索 + RabbitMQ 索引同步；DeepSeek / 向量模型密钥由 Nacos 下发
   agent:
@@ -293,31 +332,12 @@ services:
       <<: *healthcheck-base
       test: ["CMD-SHELL", "curl -fsS http://localhost:8088/actuator/health/liveness || exit 1"]
     environment:
+      <<: *common-env
       SPRING_DATASOURCE_URL: *ds-shumamall
 
   # ========================= 视频 =========================
   video:
     <<: *app-base
-    profiles: [admin, all]
-    image: shumamall/video:1.0.0
-    mem_limit: 768m
-    build:
-      context: ./shumamall-backend
-      dockerfile: Dockerfile
-      args:
-        MODULE: shumamall-video
-        PORT: 8092
-    ports:
-      - "8092:8092"
-    healthcheck:
-      <<: *healthcheck-base
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8092/actuator/health/liveness || exit 1"]
-    environment:
-      <<: *common-env
-      # 视频元数据单独一个 MongoDB 库
-      SPRING_DATA_MONGODB_URI: mongodb://shumamall:shumamall123@mongo:27017/shumamall_video?authSource=admin
-      # 预签名 URL Host 为本机 localhost:9000；容器内 SDK 经 OkHttp 转发到 minio:9000 再签名
-      MINIO_PUBLIC_ENDPOINT: http://localhost:9000
     profiles: [admin, all]
     image: shumamall/video:1.0.0
     mem_limit: 768m
