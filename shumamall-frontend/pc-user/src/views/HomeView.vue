@@ -12,6 +12,8 @@ const products = ref<Product[]>([]);
 const categories = ref<Category[]>([]);
 const activeCategoryId = ref<number | null>(null);
 const keyword = ref('');
+/** 与当前列表结果对应的检索词（仅在实际请求后更新，避免输入框改动带动提示文案） */
+const appliedKeyword = ref('');
 const sortBy = ref<'default' | 'sales' | 'priceAsc' | 'priceDesc'>('default');
 const total = ref(0);
 const page = ref(1);
@@ -58,6 +60,8 @@ function onHeroImageLoad(): void {
 }
 let sectionRevealObserver: IntersectionObserver | null = null;
 let productTileObserver: IntersectionObserver | null = null;
+/** 避免父组件因 keyword 等仅输入状态重绘时重复执行入场绑定 */
+const productTileBindIdsKey = new WeakMap<HTMLElement, string>();
 
 function bindSectionReveal(): void {
   sectionRevealObserver?.disconnect();
@@ -100,12 +104,23 @@ function ensureProductTileObserver(): IntersectionObserver | null {
 
 function setProductTileRef(el: unknown): void {
   if (!(el instanceof HTMLElement) || !el.classList.contains('scroll-rise')) return;
+  const idsKey = products.value.map((p) => p.id).join(',');
   if (!homeMotionEnabled.value) {
     el.classList.add('is-in-view');
+    productTileBindIdsKey.set(el, idsKey);
     return;
   }
   const observer = ensureProductTileObserver();
   if (!observer) return;
+  const prevKey = productTileBindIdsKey.get(el);
+  if (prevKey === idsKey) {
+    if (el.classList.contains('is-in-view')) {
+      return;
+    }
+    observer.observe(el);
+    return;
+  }
+  productTileBindIdsKey.set(el, idsKey);
   el.classList.remove('is-in-view');
   observer.observe(el);
 }
@@ -153,6 +168,7 @@ async function loadHotComments(): Promise<void> {
 async function load(pageNo = 1): Promise<void> {
   loading.value = true;
   const kw = keyword.value.trim();
+  appliedKeyword.value = kw;
   try {
     if (kw) {
       // 有关键词：优先走 ES 全文检索（IK 分词 + 分类过滤 + 排序）
@@ -330,7 +346,7 @@ onUnmounted(() => {
     </div>
 
     <div v-if="searchMode" class="search-tip">
-      全文检索「{{ keyword }}」命中 {{ total }} 件商品
+      全文检索「{{ appliedKeyword }}」命中 {{ total }} 件商品
     </div>
 
     <section
