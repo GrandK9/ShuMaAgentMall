@@ -51,6 +51,14 @@ public class ProductIndexService {
     /** 写入用的中文分词器（依赖 ES 安装 analysis-ik 插件） */
     private static final String TOKENIZER_IK = "ik_max_word";
 
+    /**
+     * 仅商品名称 {@code name} 使用的子串子字段：standard + lowercase + ngram。
+     * 索引侧切出连续子串；查询侧仅用 standard+lowercase，使「mac」「book」等子串可命中英文名。
+     */
+    private static final String FILTER_NAME_NGRAM = "shumamall_name_ngram_filter";
+    private static final String NAME_NGRAM_INDEX_ANALYZER = "shumamall_name_ngram_index";
+    private static final String NAME_NGRAM_SEARCH_ANALYZER = "shumamall_name_ngram_search";
+
     private final ElasticsearchClient esClient;
 
     public ProductIndexService(ElasticsearchClient esClient) {
@@ -208,11 +216,26 @@ public class ProductIndexService {
         return CreateIndexRequest.of(b -> b
                 .index(index)
                 .settings(s -> {
+                    // ES 默认 max_ngram_diff=1；name.ngram 使用 ngram(2–12)，须放宽至至少 10。
+                    s.index(i -> i.maxNgramDiff(10));
                     s.analysis(a -> a
                             .analyzer(TEXT_ANALYZER, an -> an
                                     .custom(c -> c
                                             .tokenizer(TOKENIZER_IK)
-                                            .charFilter("html_strip"))));
+                                            .charFilter("html_strip")))
+                            .filter(FILTER_NAME_NGRAM, f -> f
+                                    .definition(d -> d.ngram(n -> n
+                                            .minGram(2)
+                                            .maxGram(12))))
+                            .analyzer(NAME_NGRAM_INDEX_ANALYZER, an -> an
+                                    .custom(c -> c
+                                            .tokenizer("standard")
+                                            .filter("lowercase")
+                                            .filter(FILTER_NAME_NGRAM)))
+                            .analyzer(NAME_NGRAM_SEARCH_ANALYZER, an -> an
+                                    .custom(c -> c
+                                            .tokenizer("standard")
+                                            .filter("lowercase"))));
                     if (refreshInterval != null) {
                         s.refreshInterval(Time.of(t -> t.time(refreshInterval)));
                     }
@@ -220,7 +243,7 @@ public class ProductIndexService {
                 })
                 .mappings(m -> m
                         .properties("id", Property.of(p -> p.long_(l -> l)))
-                        .properties("name", Property.of(p -> p.text(this::textField)))
+                        .properties("name", Property.of(p -> p.text(this::textFieldNameForSearch)))
                         .properties("subtitle", Property.of(p -> p.text(this::textField)))
                         .properties("description", Property.of(p -> p.text(this::textField)))
                         .properties("categoryId", Property.of(p -> p.long_(l -> l)))
@@ -240,5 +263,14 @@ public class ProductIndexService {
     /** 文本字段：写入细切，查询粗切。 */
     private TextProperty.Builder textField(TextProperty.Builder builder) {
         return builder.analyzer(TEXT_ANALYZER).searchAnalyzer(SEARCH_ANALYZER);
+    }
+
+    /**
+     * 商品名称：主字段走 IK；子字段 {@code ngram} 承担英文/数字子串召回（不设 prefix 子字段）。
+     */
+    private TextProperty.Builder textFieldNameForSearch(TextProperty.Builder builder) {
+        return textField(builder).fields("ngram", Property.of(f -> f.text(t -> t
+                .analyzer(NAME_NGRAM_INDEX_ANALYZER)
+                .searchAnalyzer(NAME_NGRAM_SEARCH_ANALYZER))));
     }
 }

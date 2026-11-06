@@ -73,7 +73,8 @@ public class ProductSearchServiceImpl implements ProductSearchService {
         if (StringUtils.hasText(keyword)) {
             MultiMatchQuery multiMatch = MultiMatchQuery.of(m -> m
                     .query(keyword)
-                    .fields("name^3", "subtitle^2", "description"));
+                    // name.ngram：标题英文/数字子串；主字段与 subtitle/description 走 IK 全文
+                    .fields("name^3", "name.ngram^0.5", "subtitle^2", "description"));
             bool.must(multiMatch._toQuery());
         }
 
