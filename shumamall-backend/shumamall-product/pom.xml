@@ -14,7 +14,7 @@
     <packaging>jar</packaging>
 
     <name>ShuMaMall Product</name>
-    <description>商品聚合 — 商品 CRUD + 分类 + 品牌 + SKU + 评论区（comment 模块）</description>
+    <description>商品聚合 — 商品 CRUD + 分类 + 品牌 / SKU + 评论区</description>
 
     <dependencies>
         <!-- Spring Boot Web -->
@@ -49,12 +49,6 @@
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-loadbalancer</artifactId>
-        </dependency>
-
-        <!-- MongoDB（comment 模块文档存储） -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-mongodb</artifactId>
         </dependency>
 
         <!-- MyBatis-Plus -->
@@ -106,11 +100,6 @@
             <artifactId>shumamall-common</artifactId>
         </dependency>
 
-        <dependency>
-            <groupId>com.shumamall</groupId>
-            <artifactId>shumamall-comment</artifactId>
-            <version>${project.version}</version>
-        </dependency>
     </dependencies>
 
     <build>

@@ -8,17 +8,17 @@ import com.shumamall.video.dto.VideoMetaVO;
 import com.shumamall.video.dto.VideoPlayRespDTO;
 import com.shumamall.video.dto.VideoProgressReqDTO;
 import com.shumamall.video.dto.VideoProgressRespDTO;
-import com.shumamall.video.entity.VideoMetaDoc;
-import com.shumamall.video.entity.VideoProgressDoc;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.shumamall.video.dao.VideoMetaMapper;
+import com.shumamall.video.dao.VideoProgressMapper;
+import com.shumamall.video.entity.VideoMetaEntity;
+import com.shumamall.video.entity.VideoProgressEntity;
 import com.shumamall.video.service.VideoPlayService;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MinioClient;
 import io.minio.http.Method;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -36,29 +36,32 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>
  * 播放：MinIO 生成临时签名 URL（1 小时有效），播放器直接请求 MinIO。
  * 断点续播：前端每 10 秒上报 → 高频写 Redis（TTL 30min）；
- * 定时任务把内存累积的进度批量落库 MongoDB，读取时 Redis 优先、Mongo 兜底。
+ * 定时任务把内存累积的进度批量落库 MySQL，读取时 Redis 优先、MySQL 兜底。
  */
 @Slf4j
 @Service
 public class VideoPlayServiceImpl implements VideoPlayService {
 
-    private final MongoTemplate mongoTemplate;
+    private final VideoMetaMapper metaMapper;
+    private final VideoProgressMapper progressMapper;
     private final MinioClient minioPresignClient;
     private final MinioConfig minioConfig;
     private final StringRedisTemplate stringRedisTemplate;
 
     public VideoPlayServiceImpl(
-            MongoTemplate mongoTemplate,
+            VideoMetaMapper metaMapper,
+            VideoProgressMapper progressMapper,
             @Qualifier("minioPresignClient") MinioClient minioPresignClient,
             MinioConfig minioConfig,
             StringRedisTemplate stringRedisTemplate) {
-        this.mongoTemplate = mongoTemplate;
+        this.metaMapper = metaMapper;
+        this.progressMapper = progressMapper;
         this.minioPresignClient = minioPresignClient;
         this.minioConfig = minioConfig;
         this.stringRedisTemplate = stringRedisTemplate;
     }
 
-    /** 内存累积的播放进度（key=userId:videoId），定时 flush 到 MongoDB */
+    /** 内存累积的播放进度（key=userId:videoId），定时 flush 到 MySQL */
     private final Map<String, Double> pendingProgress = new ConcurrentHashMap<>();
 
     /** 播放进度 Redis key 前缀 */
@@ -69,7 +72,7 @@ public class VideoPlayServiceImpl implements VideoPlayService {
 
     @Override
     public VideoPlayRespDTO getPlayUrl(Long videoId) {
-        VideoMetaDoc meta = requireMeta(videoId);
+        VideoMetaEntity meta = requireMeta(videoId);
         if (!VideoConstants.STATUS_TRANSCODED.equals(meta.getStatus())) {
             return new VideoPlayRespDTO(videoId, meta.getStatus(), null,
                     meta.getDuration(), null, meta.getFailReason(), null);
@@ -101,7 +104,7 @@ public class VideoPlayServiceImpl implements VideoPlayService {
 
     @Override
     public VideoMetaVO getMeta(Long videoId) {
-        VideoMetaDoc meta = requireMeta(videoId);
+        VideoMetaEntity meta = requireMeta(videoId);
         return toVO(meta);
     }
 
@@ -111,7 +114,7 @@ public class VideoPlayServiceImpl implements VideoPlayService {
         // 高频写入 Redis（带 TTL）
         stringRedisTemplate.opsForValue().set(key,
                 dto.getPosition() + "|" + LocalDateTime.now(), Duration.ofSeconds(PROGRESS_TTL_SECONDS));
-        // 累积到内存，定时 flush 到 MongoDB
+        // 累积到内存，定时 flush 到 MySQL
         pendingProgress.put(key, dto.getPosition());
     }
 
@@ -124,17 +127,18 @@ public class VideoPlayServiceImpl implements VideoPlayService {
             try {
                 return new VideoProgressRespDTO(videoId, Double.parseDouble(position));
             } catch (NumberFormatException ignored) {
-                // 解析失败走 Mongo 兜底
+                // 解析失败走 MySQL 兜底
             }
         }
-        VideoProgressDoc doc = mongoTemplate.findOne(
-                new Query(Criteria.where("userId").is(userId).and("videoId").is(videoId)),
-                VideoProgressDoc.class);
-        return new VideoProgressRespDTO(videoId, doc != null ? doc.getPosition() : 0.0);
+        VideoProgressEntity entity = progressMapper.selectOne(
+                new LambdaQueryWrapper<VideoProgressEntity>()
+                        .eq(VideoProgressEntity::getUserId, userId)
+                        .eq(VideoProgressEntity::getVideoId, videoId));
+        return new VideoProgressRespDTO(videoId, entity != null ? entity.getPosition() : 0.0);
     }
 
     /**
-     * 定时任务：每 30 秒把内存累积的播放进度批量 upsert 到 MongoDB。
+     * 定时任务：每 30 秒把内存累积的播放进度批量 upsert 到 MySQL。
      */
     @Scheduled(fixedRate = 30000)
     public void flushPendingProgress() {
@@ -149,16 +153,20 @@ public class VideoPlayServiceImpl implements VideoPlayService {
                 Long userId = Long.parseLong(parts[parts.length - 2]);
                 Long videoId = Long.parseLong(parts[parts.length - 1]);
                 String id = userId + ":" + videoId;
-                VideoProgressDoc doc = mongoTemplate.findById(id, VideoProgressDoc.class);
-                if (doc == null) {
-                    doc = new VideoProgressDoc();
-                    doc.setId(id);
-                    doc.setUserId(userId);
-                    doc.setVideoId(videoId);
+                VideoProgressEntity entity = progressMapper.selectById(id);
+                if (entity == null) {
+                    entity = new VideoProgressEntity();
+                    entity.setId(id);
+                    entity.setUserId(userId);
+                    entity.setVideoId(videoId);
+                    entity.setPosition(position);
+                    entity.setUpdatedAt(LocalDateTime.now());
+                    progressMapper.insert(entity);
+                } else {
+                    entity.setPosition(position);
+                    entity.setUpdatedAt(LocalDateTime.now());
+                    progressMapper.updateById(entity);
                 }
-                doc.setPosition(position);
-                doc.setUpdatedAt(LocalDateTime.now());
-                mongoTemplate.save(doc);
             } catch (Exception e) {
                 log.warn("播放进度落库失败: key={}", key, e);
             }
@@ -170,8 +178,8 @@ public class VideoPlayServiceImpl implements VideoPlayService {
     /**
      * 查询视频元数据并校验存在。
      */
-    private VideoMetaDoc requireMeta(Long videoId) {
-        VideoMetaDoc meta = mongoTemplate.findById(videoId, VideoMetaDoc.class);
+    private VideoMetaEntity requireMeta(Long videoId) {
+        VideoMetaEntity meta = metaMapper.selectById(videoId);
         if (meta == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "视频不存在");
         }
@@ -181,7 +189,7 @@ public class VideoPlayServiceImpl implements VideoPlayService {
     /**
      * 元数据转视图对象。
      */
-    private VideoMetaVO toVO(VideoMetaDoc meta) {
+    private VideoMetaVO toVO(VideoMetaEntity meta) {
         VideoMetaVO vo = new VideoMetaVO();
         vo.setVideoId(meta.getVideoId());
         vo.setUploaderId(meta.getUploaderId());
@@ -221,12 +229,12 @@ public class VideoPlayServiceImpl implements VideoPlayService {
      * @param meta 视频元数据
      * @return 分片签名 URL 列表（无分片时为空列表）
      */
-    private List<VideoPlayRespDTO.SegmentUrlVO> signSegmentUrls(VideoMetaDoc meta) {
+    private List<VideoPlayRespDTO.SegmentUrlVO> signSegmentUrls(VideoMetaEntity meta) {
         List<VideoPlayRespDTO.SegmentUrlVO> urls = new ArrayList<>();
         if (meta.getHlsSegments() == null) {
             return urls;
         }
-        for (VideoMetaDoc.HlsSegment segment : meta.getHlsSegments()) {
+        for (VideoMetaEntity.HlsSegmentItem segment : meta.getHlsSegments()) {
             try {
                 String signed = minioPresignClient.getPresignedObjectUrl(
                         GetPresignedObjectUrlArgs.builder()

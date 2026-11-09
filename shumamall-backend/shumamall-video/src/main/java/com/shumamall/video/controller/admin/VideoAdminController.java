@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 视频管理控制器（管理端）。
  * <p>
- * 视频列表 / 删除（清理 MinIO + MongoDB）/ 重新转码兜底。
+ * 视频列表 / 删除（清理 MinIO + MySQL 元数据）/ 重新转码兜底。
  * 上传接口复用 {@link com.shumamall.video.controller.VideoUploadController}（init/chunk/complete）。
  * <p>
  * 三个接口均挂 {@link RequirePermission}：本服务的认证过滤器是
@@ -49,7 +49,7 @@ public class VideoAdminController {
     }
 
     /**
-     * 删除视频（清理 MinIO 原始文件 + HLS 分片 + MongoDB 元数据）。
+     * 删除视频（清理 MinIO 原始文件 + HLS 分片 + MySQL 元数据）。
      *
      * @param videoId 视频 ID
      * @return 操作结果

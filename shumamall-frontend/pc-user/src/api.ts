@@ -614,7 +614,7 @@ export function getVideoProgress(videoId: string): Promise<VideoProgress> {
 /**
  * 上报播放进度（需登录）。
  * <p>
- * 服务端把高频写入放 Redis，定期回写 MongoDB，因此上报频率可以按 10 秒一次给。
+ * 服务端把高频写入放 Redis，定期回写 MySQL，因此上报频率可以按 10 秒一次给。
  *
  * @param videoId       视频 ID（字符串雪花 ID）
  * @param position      当前播放位置（秒）

@@ -473,7 +473,7 @@ export function getVideoPage(
 }
 
 /**
- * 删除视频（清理 MinIO 原始文件 + HLS 分片 + 缩略图 + MongoDB 元数据）。
+ * 删除视频（清理 MinIO 原始文件 + HLS 分片 + 缩略图 + MySQL 元数据）。
  *
  * @param videoId 雪花 ID，必须按字符串透传（19 位，转 number 会丢精度）
  */

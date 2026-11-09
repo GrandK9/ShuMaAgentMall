@@ -6,7 +6,7 @@ package com.shumamall.video.service;
  * 负责定时清理 MinIO raw bucket 中过期上传会话的残留分片：
  * <ul>
  *   <li>合并成功后会同步删除分片，偶发失败或过期未完成上传仍可能残留 {@code chunk_*}；</li>
- *   <li>MongoDB TTL 到期会删除会话文档，但不会触发 MinIO 侧清理。</li>
+ *   <li>上传会话过期行删除后，不会自动触发 MinIO 侧清理，需本任务兜底。</li>
  * </ul>
  * 清理以 MinIO raw 目录为权威：凡未被 {@code video_metadata.rawObject} 引用的
  * 对象（重转码依赖源文件）均视为残留删除，被引用的源文件始终保留。

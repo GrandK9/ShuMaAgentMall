@@ -18,7 +18,7 @@ public interface VideoAdminService {
     PageResult<VideoMetaVO> page(VideoPageQuery query);
 
     /**
-     * 删除视频（清理 MinIO 原始文件 + HLS 分片 + MongoDB 元数据）。
+     * 删除视频（清理 MinIO 原始文件 + HLS 分片 + MySQL 元数据）。
      *
      * @param videoId 视频 ID
      */

@@ -1,10 +1,13 @@
 package com.shumamall.video.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.shumamall.common.exception.BusinessException;
 import com.shumamall.video.config.MinioConfig;
 import com.shumamall.video.constant.VideoConstants;
-import com.shumamall.video.entity.UploadSessionDoc;
-import com.shumamall.video.entity.VideoMetaDoc;
+import com.shumamall.video.dao.VideoMetaMapper;
+import com.shumamall.video.dao.VideoUploadSessionMapper;
+import com.shumamall.video.entity.VideoMetaEntity;
+import com.shumamall.video.entity.VideoUploadSessionEntity;
 import com.shumamall.video.service.UploadSessionCleanupService;
 import com.shumamall.video.service.VideoProcessService;
 import io.minio.ComposeObjectArgs;
@@ -20,9 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.mock.web.MockMultipartFile;
-import com.mongodb.client.result.UpdateResult;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
@@ -32,6 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -46,7 +48,9 @@ class VideoUploadServiceImplChunkTest {
     private static final String MD5_ABC = "900150983cd24fb0d6963f7d28e17f72";
 
     @Mock
-    private MongoTemplate mongoTemplate;
+    private VideoUploadSessionMapper uploadSessionMapper;
+    @Mock
+    private VideoMetaMapper metaMapper;
     @Mock
     private MinioClient minioClient;
     @Mock
@@ -61,7 +65,8 @@ class VideoUploadServiceImplChunkTest {
     @BeforeEach
     void setUp() {
         service = new VideoUploadServiceImpl(
-                mongoTemplate, minioClient, minioConfig, videoProcessService, uploadSessionCleanupService);
+                uploadSessionMapper, metaMapper, minioClient, minioConfig,
+                videoProcessService, uploadSessionCleanupService);
     }
 
     @Test
@@ -84,32 +89,32 @@ class VideoUploadServiceImplChunkTest {
 
     @Test
     void uploadChunk_摘要一致才记入索引() throws Exception {
-        UploadSessionDoc session = uploadingSession();
-        when(mongoTemplate.findById("s1", UploadSessionDoc.class)).thenReturn(session);
+        VideoUploadSessionEntity session = uploadingSession();
+        when(uploadSessionMapper.selectById("s1")).thenReturn(session);
         when(minioConfig.getRawBucket()).thenReturn("shumamall-raw");
         when(minioClient.putObject(any(PutObjectArgs.class))).thenReturn(etag("\"" + MD5_ABC + "\""));
 
         service.uploadChunk("s1", 0, file("abc"), MD5_ABC);
 
         assertThat(session.getChunks()).containsExactly(0);
-        verify(mongoTemplate).save(session);
+        verify(uploadSessionMapper).updateById(session);
     }
 
     @Test
     void uploadChunk_与浏览器摘要不一致时不写入() throws Exception {
-        when(mongoTemplate.findById("s1", UploadSessionDoc.class)).thenReturn(uploadingSession());
+        when(uploadSessionMapper.selectById("s1")).thenReturn(uploadingSession());
 
         assertThatThrownBy(() -> service.uploadChunk("s1", 0, file("abc"), "ab".repeat(16)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage(VideoUploadServiceImpl.CHUNK_CHECKSUM_MISMATCH);
         verify(minioClient, never()).putObject(any(PutObjectArgs.class));
-        verify(mongoTemplate, never()).save(any());
+        verify(uploadSessionMapper, never()).updateById(any(VideoUploadSessionEntity.class));
     }
 
     @Test
     void uploadChunk_写入后ETag不一致时不记索引() throws Exception {
-        UploadSessionDoc session = uploadingSession();
-        when(mongoTemplate.findById("s1", UploadSessionDoc.class)).thenReturn(session);
+        VideoUploadSessionEntity session = uploadingSession();
+        when(uploadSessionMapper.selectById("s1")).thenReturn(session);
         when(minioConfig.getRawBucket()).thenReturn("shumamall-raw");
         when(minioClient.putObject(any(PutObjectArgs.class))).thenReturn(etag("d".repeat(32)));
 
@@ -117,21 +122,19 @@ class VideoUploadServiceImplChunkTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessage(VideoUploadServiceImpl.CHUNK_CHECKSUM_MISMATCH);
         assertThat(session.getChunks()).isEmpty();
-        verify(mongoTemplate, never()).save(any());
+        verify(uploadSessionMapper, never()).updateById(any(VideoUploadSessionEntity.class));
     }
 
     @Test
     void completeUpload_大小与片号齐全才合并() throws Exception {
-        UploadSessionDoc session = uploadingSession();
+        VideoUploadSessionEntity session = uploadingSession();
         session.setFileSize(3L);
         session.getChunks().add(0);
-        when(mongoTemplate.findAndModify(any(), any(), any(), eq(UploadSessionDoc.class))).thenReturn(session);
+        when(uploadSessionMapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(uploadSessionMapper.selectById("s1")).thenReturn(session);
         when(minioConfig.getRawBucket()).thenReturn("shumamall-raw");
         when(minioClient.statObject(any(StatObjectArgs.class))).thenReturn(sized(3));
-        UpdateResult updated = org.mockito.Mockito.mock(UpdateResult.class);
-        when(updated.getModifiedCount()).thenReturn(1L);
-        when(mongoTemplate.updateFirst(any(), any(), eq(UploadSessionDoc.class))).thenReturn(updated);
-        VideoMetaDoc meta = new VideoMetaDoc();
+        VideoMetaEntity meta = new VideoMetaEntity();
         meta.setVideoId(9L);
         when(videoProcessService.createMetaForMergedUpload("s1")).thenReturn(meta);
 
@@ -143,10 +146,11 @@ class VideoUploadServiceImplChunkTest {
 
     @Test
     void completeUpload_缺片或大小不符时不合并() throws Exception {
-        UploadSessionDoc session = uploadingSession();
+        VideoUploadSessionEntity session = uploadingSession();
         session.setFileSize(VideoConstants.CHUNK_SIZE + 10L);
         session.getChunks().add(0);
-        when(mongoTemplate.findAndModify(any(), any(), any(), eq(UploadSessionDoc.class))).thenReturn(session);
+        when(uploadSessionMapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(uploadSessionMapper.selectById("s1")).thenReturn(session);
         when(minioConfig.getRawBucket()).thenReturn("shumamall-raw");
         when(minioClient.statObject(any(StatObjectArgs.class))).thenReturn(sized(VideoConstants.CHUNK_SIZE));
 
@@ -155,16 +159,18 @@ class VideoUploadServiceImplChunkTest {
                 .hasMessage(VideoUploadServiceImpl.CHUNK_LAYOUT_MISMATCH);
         verify(minioClient, never()).composeObject(any(ComposeObjectArgs.class));
         verify(minioClient, never()).removeObject(any(RemoveObjectArgs.class));
-        verify(mongoTemplate).updateFirst(any(), any(), eq(UploadSessionDoc.class));
+        verify(uploadSessionMapper, times(2)).update(isNull(), any(LambdaUpdateWrapper.class));
     }
 
     @Test
     void completeUpload_非末片不是5MB时不合并() throws Exception {
-        UploadSessionDoc session = uploadingSession();
+        VideoUploadSessionEntity session = uploadingSession();
         session.setFileSize(VideoConstants.CHUNK_SIZE + 10L);
         session.getChunks().add(0);
         session.getChunks().add(1);
-        when(mongoTemplate.findAndModify(any(), any(), any(), eq(UploadSessionDoc.class))).thenReturn(session);
+        when(uploadSessionMapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(uploadSessionMapper.selectById("s1")).thenReturn(session);
+        when(uploadSessionMapper.selectById(eq("s1"))).thenReturn(session);
         when(minioConfig.getRawBucket()).thenReturn("shumamall-raw");
         when(minioClient.statObject(any(StatObjectArgs.class))).thenReturn(sized(100));
 
@@ -175,8 +181,8 @@ class VideoUploadServiceImplChunkTest {
         verify(minioClient, times(2)).removeObject(any(RemoveObjectArgs.class));
     }
 
-    private UploadSessionDoc uploadingSession() {
-        UploadSessionDoc session = new UploadSessionDoc();
+    private VideoUploadSessionEntity uploadingSession() {
+        VideoUploadSessionEntity session = new VideoUploadSessionEntity();
         session.setSessionId("s1");
         session.setStatus(VideoConstants.SESSION_UPLOADING);
         session.setChunks(new ArrayList<>());

@@ -111,29 +111,6 @@ services:
       retries: 3
       start_period: 30s
 
-  # =================== MongoDB 7 ===================
-  mongo:
-    image: mongo:7
-    container_name: shumamall-mongo
-    networks: [shumamall-net]
-    restart: unless-stopped
-    mem_limit: 512m
-    ports:
-      - "27017:27017"
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: shumamall
-      MONGO_INITDB_ROOT_PASSWORD: shumamall123
-      MONGO_INITDB_DATABASE: shumamall
-    volumes:
-      - mongo-data:/data/db
-      - ./mongo-init:/docker-entrypoint-initdb.d
-    healthcheck:
-      test: mongosh --eval 'db.adminCommand("ping")' --quiet
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
   # =================== Seata Server ===================
   seata:
     # TC（事务协调器）用本地已有的 seataio/seata-server:2.0.0 镜像。曾尝试升到
@@ -205,7 +182,6 @@ volumes:
   nacos-data:
   rabbitmq-data:
   minio-data:
-  mongo-data:
   seata-data:
   es-data:
 

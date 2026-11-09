@@ -1,17 +1,16 @@
 package com.shumamall.video.config;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.shumamall.common.exception.BusinessException;
 import com.shumamall.common.result.ResultCode;
-import com.shumamall.video.config.VideoProperties;
 import com.shumamall.video.constant.VideoConstants;
-import com.shumamall.video.entity.UploadSessionDoc;
-import com.shumamall.video.entity.VideoMetaDoc;
+import com.shumamall.video.dao.VideoMetaMapper;
+import com.shumamall.video.dao.VideoUploadSessionMapper;
+import com.shumamall.video.entity.VideoMetaEntity;
+import com.shumamall.video.entity.VideoUploadSessionEntity;
 import com.shumamall.video.support.ProcessTaskDeadline;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ArrayBlockingQueue;
@@ -24,18 +23,22 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * 管理端分片合并后的异步转码线程池：有界队列 + 拒绝时更新 Mongo 并抛出业务异常。
+ * 管理端分片合并后的异步转码线程池：有界队列 + 拒绝时更新 MySQL 并抛出业务异常。
  */
 @Slf4j
 @Component
 public class VideoTranscodeExecutor {
 
-    private final MongoTemplate mongoTemplate;
+    private final VideoUploadSessionMapper uploadSessionMapper;
+    private final VideoMetaMapper metaMapper;
     private final VideoProperties videoProperties;
     private final ThreadPoolExecutor executor;
 
-    public VideoTranscodeExecutor(MongoTemplate mongoTemplate, VideoProperties videoProperties) {
-        this.mongoTemplate = mongoTemplate;
+    public VideoTranscodeExecutor(VideoUploadSessionMapper uploadSessionMapper,
+                                  VideoMetaMapper metaMapper,
+                                  VideoProperties videoProperties) {
+        this.uploadSessionMapper = uploadSessionMapper;
+        this.metaMapper = metaMapper;
         this.videoProperties = videoProperties;
         VideoProperties.Transcode transcode = videoProperties.getTranscode();
         int poolSize = transcode.getPoolSize();
@@ -83,7 +86,7 @@ public class VideoTranscodeExecutor {
      * @param meta 视频元数据（拒绝时写回 failReason）
      * @param task 转码逻辑
      */
-    public void scheduleRetranscode(VideoMetaDoc meta, Runnable task) {
+    public void scheduleRetranscode(VideoMetaEntity meta, Runnable task) {
         try {
             executor.execute(wrapWithTaskDeadline(task));
         } catch (RejectedExecutionException ex) {
@@ -93,33 +96,33 @@ public class VideoTranscodeExecutor {
     }
 
     private void markSessionTranscodeBusy(String sessionId) {
-        UploadSessionDoc session = mongoTemplate.findById(sessionId, UploadSessionDoc.class);
+        VideoUploadSessionEntity session = uploadSessionMapper.selectById(sessionId);
         if (session != null) {
             session.setStatus(VideoConstants.SESSION_FAILED);
             session.setFailReason(VideoConstants.TRANSCODE_BUSY_MESSAGE);
-            mongoTemplate.save(session);
+            uploadSessionMapper.updateById(session);
         }
-        VideoMetaDoc meta = mongoTemplate.findOne(
-                new Query(Criteria.where("sessionId").is(sessionId)), VideoMetaDoc.class);
+        VideoMetaEntity meta = metaMapper.selectOne(new LambdaQueryWrapper<VideoMetaEntity>()
+                .eq(VideoMetaEntity::getSessionId, sessionId));
         if (meta != null) {
             meta.setStatus(VideoConstants.STATUS_FAILED);
             meta.setFailReason(VideoConstants.TRANSCODE_BUSY_MESSAGE);
-            mongoTemplate.save(meta);
+            metaMapper.updateById(meta);
         }
         log.warn("转码队列已满，已标记失败: sessionId={}", sessionId);
     }
 
-    private void markMetaTranscodeBusy(VideoMetaDoc meta) {
+    private void markMetaTranscodeBusy(VideoMetaEntity meta) {
         if (meta == null || meta.getVideoId() == null) {
             return;
         }
-        VideoMetaDoc latest = mongoTemplate.findById(meta.getVideoId(), VideoMetaDoc.class);
+        VideoMetaEntity latest = metaMapper.selectById(meta.getVideoId());
         if (latest == null) {
             return;
         }
         latest.setStatus(VideoConstants.STATUS_FAILED);
         latest.setFailReason(VideoConstants.TRANSCODE_BUSY_MESSAGE);
-        mongoTemplate.save(latest);
+        metaMapper.updateById(latest);
         log.warn("转码队列已满，元数据已标记失败: videoId={}", meta.getVideoId());
     }
 

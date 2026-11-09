@@ -330,3 +330,5 @@ CREATE TABLE IF NOT EXISTS `undo_log` (
   `log_modified`  DATETIME(6)  NOT NULL COMMENT '修改时间',
   UNIQUE KEY `ux_undo_log` (`xid`, `branch_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AT 模式 undo_log 表';
+
+-- 评论 / 审计 / 视频表见 mysql-init/document_tables.sql（compose 挂载 mysql-init 时一并执行）

@@ -1,6 +1,6 @@
 package com.shumamall.product.comment;
 
-import com.shumamall.comment.spi.ProductCommentCounter;
+import com.shumamall.product.comment.spi.ProductCommentCounter;
 import com.shumamall.product.service.ProductService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;

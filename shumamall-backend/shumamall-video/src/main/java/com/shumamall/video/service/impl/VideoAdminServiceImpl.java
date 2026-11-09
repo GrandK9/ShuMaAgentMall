@@ -1,12 +1,15 @@
 package com.shumamall.video.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.shumamall.common.exception.BusinessException;
 import com.shumamall.common.result.PageResult;
 import com.shumamall.common.result.ResultCode;
 import com.shumamall.video.config.MinioConfig;
+import com.shumamall.video.dao.VideoMetaMapper;
 import com.shumamall.video.dto.VideoMetaVO;
 import com.shumamall.video.dto.VideoPageQuery;
-import com.shumamall.video.entity.VideoMetaDoc;
+import com.shumamall.video.entity.VideoMetaEntity;
 import com.shumamall.video.service.VideoAdminService;
 import com.shumamall.video.service.VideoProcessService;
 import io.minio.ListObjectsArgs;
@@ -16,10 +19,6 @@ import io.minio.Result;
 import io.minio.messages.Item;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.Sort;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -34,34 +33,32 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class VideoAdminServiceImpl implements VideoAdminService {
 
-    private final MongoTemplate mongoTemplate;
+    private final VideoMetaMapper metaMapper;
     private final MinioClient minioClient;
     private final MinioConfig minioConfig;
     private final VideoProcessService videoProcessService;
 
     @Override
     public PageResult<VideoMetaVO> page(VideoPageQuery query) {
-        Query q = new Query();
+        LambdaQueryWrapper<VideoMetaEntity> wrapper = new LambdaQueryWrapper<>();
         if (StringUtils.hasText(query.getStatus())) {
-            q.addCriteria(Criteria.where("status").is(query.getStatus()));
+            wrapper.eq(VideoMetaEntity::getStatus, query.getStatus());
         }
         if (StringUtils.hasText(query.getUploaderType())) {
-            q.addCriteria(Criteria.where("uploaderType").is(query.getUploaderType()));
+            wrapper.eq(VideoMetaEntity::getUploaderType, query.getUploaderType());
         }
-        long total = mongoTemplate.count(q, VideoMetaDoc.class);
+        wrapper.orderByDesc(VideoMetaEntity::getUploadedAt);
 
-        q.with(Sort.by(Sort.Direction.DESC, "uploadedAt"))
-                .skip((long) (query.getPage() - 1) * query.getSize())
-                .limit(query.getSize());
-        List<VideoMetaDoc> records = mongoTemplate.find(q, VideoMetaDoc.class);
+        Page<VideoMetaEntity> page = new Page<>(query.getPage(), query.getSize());
+        Page<VideoMetaEntity> result = metaMapper.selectPage(page, wrapper);
 
-        List<VideoMetaVO> list = records.stream().map(this::toVO).collect(Collectors.toList());
-        return new PageResult<>((long) query.getPage(), (long) query.getSize(), total, list);
+        List<VideoMetaVO> list = result.getRecords().stream().map(this::toVO).collect(Collectors.toList());
+        return new PageResult<>((long) query.getPage(), (long) query.getSize(), result.getTotal(), list);
     }
 
     @Override
     public void delete(Long videoId) {
-        VideoMetaDoc meta = mongoTemplate.findById(videoId, VideoMetaDoc.class);
+        VideoMetaEntity meta = metaMapper.selectById(videoId);
         if (meta == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "视频不存在");
         }
@@ -75,13 +72,13 @@ public class VideoAdminServiceImpl implements VideoAdminService {
         if (StringUtils.hasText(meta.getThumbnailUrl())) {
             removeObjectIfExists(minioConfig.getThumbBucket(), meta.getThumbnailUrl());
         }
-        mongoTemplate.remove(meta);
+        metaMapper.deleteById(videoId);
         log.info("视频已删除: videoId={}, uploaderId={}", videoId, meta.getUploaderId());
     }
 
     @Override
     public void reTranscode(Long videoId) {
-        VideoMetaDoc meta = mongoTemplate.findById(videoId, VideoMetaDoc.class);
+        VideoMetaEntity meta = metaMapper.selectById(videoId);
         if (meta == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "视频不存在");
         }
@@ -97,7 +94,7 @@ public class VideoAdminServiceImpl implements VideoAdminService {
     /**
      * 元数据转视图对象。
      */
-    private VideoMetaVO toVO(VideoMetaDoc meta) {
+    private VideoMetaVO toVO(VideoMetaEntity meta) {
         VideoMetaVO vo = new VideoMetaVO();
         vo.setVideoId(meta.getVideoId());
         vo.setUploaderId(meta.getUploaderId());

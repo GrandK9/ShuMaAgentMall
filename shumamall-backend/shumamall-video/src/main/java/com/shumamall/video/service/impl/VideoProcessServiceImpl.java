@@ -8,8 +8,11 @@ import com.shumamall.video.config.VideoProperties;
 import com.shumamall.video.config.VideoTranscodeExecutor;
 import com.shumamall.video.constant.VideoConstants;
 import com.shumamall.video.dto.UploadRespDTO;
-import com.shumamall.video.entity.UploadSessionDoc;
-import com.shumamall.video.entity.VideoMetaDoc;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.shumamall.video.dao.VideoMetaMapper;
+import com.shumamall.video.dao.VideoUploadSessionMapper;
+import com.shumamall.video.entity.VideoMetaEntity;
+import com.shumamall.video.entity.VideoUploadSessionEntity;
 import com.shumamall.video.exception.VideoValidationException;
 import com.shumamall.video.service.VideoProcessService;
 import com.shumamall.video.support.ProcessTaskDeadline;
@@ -20,9 +23,6 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -49,7 +49,7 @@ import java.util.stream.Stream;
  * 核心流程（与架构文档一致）：
  * <pre>
  * MinIO raw → 下载临时文件 → ffprobe 校验（编码/分辨率/时长/大小）
- *   → FFmpeg HLS 切片（libx264 + aac，6s/片）→ 上传 video-hls → 更新 MongoDB 元数据
+ *   → FFmpeg HLS 切片（libx264 + aac，6s/片）→ 上传 video-hls → 更新 MySQL 元数据
  * </pre>
  * 校验不通过不返回 415（异步场景），而是把失败原因写入元数据，由前端轮询提示用户。
  */
@@ -60,7 +60,8 @@ public class VideoProcessServiceImpl implements VideoProcessService {
 
     private final MinioClient minioClient;
     private final MinioConfig minioConfig;
-    private final MongoTemplate mongoTemplate;
+    private final VideoMetaMapper metaMapper;
+    private final VideoUploadSessionMapper uploadSessionMapper;
     private final VideoTranscodeExecutor videoTranscodeExecutor;
     private final VideoProperties videoProperties;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -76,23 +77,23 @@ public class VideoProcessServiceImpl implements VideoProcessService {
             "#EXTINF:([0-9.]+),[^\\r\\n]*\\r?\\n([^\\r\\n]+)");
 
     @Override
-    public VideoMetaDoc createMetaForMergedUpload(String sessionId) {
-        VideoMetaDoc existing = mongoTemplate.findOne(
-                new Query(Criteria.where("sessionId").is(sessionId)), VideoMetaDoc.class);
+    public VideoMetaEntity createMetaForMergedUpload(String sessionId) {
+        VideoMetaEntity existing = metaMapper.selectOne(new LambdaQueryWrapper<VideoMetaEntity>()
+                .eq(VideoMetaEntity::getSessionId, sessionId));
         if (existing != null) {
             return existing;
         }
-        UploadSessionDoc session = mongoTemplate.findById(sessionId, UploadSessionDoc.class);
+        VideoUploadSessionEntity session = uploadSessionMapper.selectById(sessionId);
         if (session == null) {
             throw new VideoValidationException("上传会话不存在，无法创建视频元数据");
         }
         String mergedObject = "raw/" + sessionId + "/merged.mp4";
-        VideoMetaDoc meta = buildMeta(session.getUploaderId(), session.getUploaderType(),
+        VideoMetaEntity meta = buildMeta(session.getUploaderId(), session.getUploaderType(),
                 session.getSourceType(), session.getLimitType(), mergedObject,
                 session.getFileSize(), sessionId);
-        mongoTemplate.insert(meta);
+        metaMapper.insert(meta);
         session.setVideoId(meta.getVideoId());
-        mongoTemplate.save(session);
+        uploadSessionMapper.updateById(session);
         log.info("合并完成，已创建视频元数据: sessionId={}, videoId={}", sessionId, meta.getVideoId());
         return meta;
     }
@@ -120,9 +121,9 @@ public class VideoProcessServiceImpl implements VideoProcessService {
         }
 
         // 创建元数据并同步执行校验 + 切片（评论区小文件，等待结果返回）
-        VideoMetaDoc meta = buildMeta(uploaderId, uploaderType, sourceType, limitType,
+        VideoMetaEntity meta = buildMeta(uploaderId, uploaderType, sourceType, limitType,
                 rawObject, file.getSize(), null);
-        mongoTemplate.insert(meta);
+        metaMapper.insert(meta);
 
         long taskMaxSeconds = videoProperties.getTask().getMaxSeconds();
         ProcessTaskDeadline.runWithDeadline(taskMaxSeconds, () -> {
@@ -138,12 +139,12 @@ public class VideoProcessServiceImpl implements VideoProcessService {
     }
 
     @Override
-    public void reTranscode(VideoMetaDoc meta) {
+    public void reTranscode(VideoMetaEntity meta) {
         videoTranscodeExecutor.scheduleRetranscode(meta, () -> {
             meta.setStatus(VideoConstants.STATUS_VALIDATING);
             meta.setFailReason(null);
             meta.setHlsSegments(new ArrayList<>());
-            mongoTemplate.save(meta);
+            metaMapper.updateById(meta);
 
             File tempFile = downloadToTemp(minioConfig.getRawBucket(), meta.getRawObject(), meta.getLimitType());
             try {
@@ -160,7 +161,7 @@ public class VideoProcessServiceImpl implements VideoProcessService {
      * 异步转码：更新已存在的元数据。
      */
     private void doProcessVideo(Long videoId) {
-        VideoMetaDoc meta = mongoTemplate.findById(videoId, VideoMetaDoc.class);
+        VideoMetaEntity meta = metaMapper.selectById(videoId);
         if (meta == null) {
             log.warn("转码任务跳过：元数据不存在 videoId={}", videoId);
             return;
@@ -176,9 +177,9 @@ public class VideoProcessServiceImpl implements VideoProcessService {
     /**
      * 构建视频元数据（初始状态 validating）。
      */
-    private VideoMetaDoc buildMeta(Long uploaderId, String uploaderType, String sourceType,
-                                   String limitType, String rawObject, Long fileSize, String sessionId) {
-        VideoMetaDoc meta = new VideoMetaDoc();
+    private VideoMetaEntity buildMeta(Long uploaderId, String uploaderType, String sourceType,
+                                      String limitType, String rawObject, Long fileSize, String sessionId) {
+        VideoMetaEntity meta = new VideoMetaEntity();
         meta.setVideoId(IdWorker.getId());
         meta.setUploaderId(uploaderId);
         meta.setUploaderType(uploaderType);
@@ -198,7 +199,7 @@ public class VideoProcessServiceImpl implements VideoProcessService {
      * @param meta   视频元数据
      * @param source 本地临时源文件
      */
-    private void runProcess(VideoMetaDoc meta, File source) {
+    private void runProcess(VideoMetaEntity meta, File source) {
         ProcessTaskDeadline.check();
         try {
             ProbeResult probe = probe(source);
@@ -210,7 +211,7 @@ public class VideoProcessServiceImpl implements VideoProcessService {
             meta.setWidth(probe.getWidth());
             meta.setHeight(probe.getHeight());
 
-            List<VideoMetaDoc.HlsSegment> segments = transcode(source, meta.getVideoId(), meta.getLimitType());
+            List<VideoMetaEntity.HlsSegmentItem> segments = transcode(source, meta.getVideoId(), meta.getLimitType());
             meta.setHlsSegments(segments);
             meta.setPlaylistUrl("hls/" + meta.getVideoId() + "/index.m3u8");
             // 缩略图生成失败不阻塞主流程，仅告警（可播放优先）
@@ -228,7 +229,7 @@ public class VideoProcessServiceImpl implements VideoProcessService {
             meta.setStatus(VideoConstants.STATUS_FAILED);
             meta.setFailReason("系统处理失败: " + e.getMessage());
         }
-        mongoTemplate.save(meta);
+        metaMapper.updateById(meta);
     }
 
     /**
@@ -315,7 +316,7 @@ public class VideoProcessServiceImpl implements VideoProcessService {
      * @param videoId 视频 ID
      * @return 分片列表
      */
-    private List<VideoMetaDoc.HlsSegment> transcode(File source, Long videoId, String limitType) throws Exception {
+    private List<VideoMetaEntity.HlsSegmentItem> transcode(File source, Long videoId, String limitType) throws Exception {
         Path outDir = Files.createTempDirectory("hls-" + videoId);
         Path playlist = outDir.resolve("index.m3u8");
 
@@ -338,7 +339,7 @@ public class VideoProcessServiceImpl implements VideoProcessService {
             });
         }
 
-        List<VideoMetaDoc.HlsSegment> segments = parsePlaylist(playlist, videoId);
+        List<VideoMetaEntity.HlsSegmentItem> segments = parsePlaylist(playlist, videoId);
         log.debug("HLS 切片上传完成: videoId={}, 分片数={}", videoId, segments.size());
         return segments;
     }
@@ -352,7 +353,7 @@ public class VideoProcessServiceImpl implements VideoProcessService {
      * @param meta   视频元数据
      * @param source 本地源文件
      */
-    private void generateThumbnail(VideoMetaDoc meta, File source, String limitType) {
+    private void generateThumbnail(VideoMetaEntity meta, File source, String limitType) {
         try {
             Path thumbDir = Files.createTempDirectory("thumb-" + meta.getVideoId());
             Path thumbFile = thumbDir.resolve("thumb.jpg");
@@ -395,15 +396,15 @@ public class VideoProcessServiceImpl implements VideoProcessService {
      * @param videoId  视频 ID
      * @return 分片列表
      */
-    private List<VideoMetaDoc.HlsSegment> parsePlaylist(Path playlist, Long videoId) throws Exception {
-        List<VideoMetaDoc.HlsSegment> segments = new ArrayList<>();
+    private List<VideoMetaEntity.HlsSegmentItem> parsePlaylist(Path playlist, Long videoId) throws Exception {
+        List<VideoMetaEntity.HlsSegmentItem> segments = new ArrayList<>();
         String content = Files.readString(playlist, StandardCharsets.UTF_8);
         Matcher matcher = EXTINF_PATTERN.matcher(content);
         int index = 0;
         while (matcher.find()) {
             double duration = Double.parseDouble(matcher.group(1));
             String segmentFile = matcher.group(2).trim();
-            segments.add(new VideoMetaDoc.HlsSegment(index++, duration, "hls/" + videoId + "/" + segmentFile));
+            segments.add(new VideoMetaEntity.HlsSegmentItem(index++, duration, "hls/" + videoId + "/" + segmentFile));
         }
         return segments;
     }

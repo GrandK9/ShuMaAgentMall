@@ -1,14 +1,14 @@
 package com.shumamall.video.service;
 
 import com.shumamall.video.dto.UploadRespDTO;
-import com.shumamall.video.entity.VideoMetaDoc;
+import com.shumamall.video.entity.VideoMetaEntity;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
  * 视频处理服务接口。
  * <p>
  * 核心流程：ffprobe 格式校验（编码/分辨率/时长/大小）→ FFmpeg HLS 切片 →
- * 切片上传 MinIO → 更新 MongoDB 元数据。重转码管线仅作为第三方 API 上传的兜底。
+ * 切片上传 MinIO → 更新 MySQL 元数据。重转码管线仅作为第三方 API 上传的兜底。
  */
 public interface VideoProcessService {
 
@@ -18,7 +18,7 @@ public interface VideoProcessService {
      * @param sessionId 上传会话 ID
      * @return 元数据（含 videoId）
      */
-    VideoMetaDoc createMetaForMergedUpload(String sessionId);
+    VideoMetaEntity createMetaForMergedUpload(String sessionId);
 
     /**
      * 异步转码：校验 + HLS 切片，更新已存在的元数据。
@@ -44,5 +44,5 @@ public interface VideoProcessService {
      *
      * @param meta 视频元数据
      */
-    void reTranscode(VideoMetaDoc meta);
+    void reTranscode(VideoMetaEntity meta);
 }

@@ -24,7 +24,6 @@
         <module>shumamall-admin</module>
         <module>shumamall-order</module>
         <module>shumamall-payment</module>
-        <module>shumamall-comment</module>
         <module>shumamall-search</module>
         <module>shumamall-dict</module>
         <module>shumamall-video</module>

@@ -14,7 +14,7 @@ import com.shumamall.video.dto.VideoMetaVO;
 import com.shumamall.video.dto.VideoPlayRespDTO;
 import com.shumamall.video.dto.VideoProgressReqDTO;
 import com.shumamall.video.dto.VideoProgressRespDTO;
-import com.shumamall.video.entity.UploadSessionDoc;
+import com.shumamall.video.entity.VideoUploadSessionEntity;
 import com.shumamall.video.service.VideoPlayService;
 import com.shumamall.video.service.VideoUploadService;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -96,7 +96,7 @@ public class VideoUploadController {
      * @return 会话信息
      */
     @GetMapping("/session/{sessionId}")
-    public R<UploadSessionDoc> getSession(@PathVariable String sessionId) {
+    public R<VideoUploadSessionEntity> getSession(@PathVariable String sessionId) {
         return R.ok(videoUploadService.getSession(sessionId));
     }
 

@@ -1,9 +1,12 @@
 package com.shumamall.video.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.shumamall.video.config.MinioConfig;
 import com.shumamall.video.constant.VideoConstants;
-import com.shumamall.video.entity.UploadSessionDoc;
-import com.shumamall.video.entity.VideoMetaDoc;
+import com.shumamall.video.dao.VideoMetaMapper;
+import com.shumamall.video.dao.VideoUploadSessionMapper;
+import com.shumamall.video.entity.VideoMetaEntity;
+import com.shumamall.video.entity.VideoUploadSessionEntity;
 import com.shumamall.video.service.UploadSessionCleanupService;
 import io.minio.ListObjectsArgs;
 import io.minio.MinioClient;
@@ -12,9 +15,6 @@ import io.minio.Result;
 import io.minio.messages.Item;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -35,7 +35,8 @@ public class UploadSessionCleanupServiceImpl implements UploadSessionCleanupServ
     private static final String CHUNK_NAME_FRAGMENT = "/chunk_";
     private static final long RETRY_DELAY_MS = 500L;
 
-    private final MongoTemplate mongoTemplate;
+    private final VideoUploadSessionMapper uploadSessionMapper;
+    private final VideoMetaMapper metaMapper;
     private final MinioClient minioClient;
     private final MinioConfig minioConfig;
 
@@ -58,10 +59,10 @@ public class UploadSessionCleanupServiceImpl implements UploadSessionCleanupServ
     }
 
     private void retryCleanupFailedSessions() {
-        List<UploadSessionDoc> pending = mongoTemplate.find(
-                new Query(Criteria.where("status").is(VideoConstants.SESSION_CLEANUP_FAILED)),
-                UploadSessionDoc.class);
-        for (UploadSessionDoc session : pending) {
+        List<VideoUploadSessionEntity> pending = uploadSessionMapper.selectList(
+                new LambdaQueryWrapper<VideoUploadSessionEntity>()
+                        .eq(VideoUploadSessionEntity::getStatus, VideoConstants.SESSION_CLEANUP_FAILED));
+        for (VideoUploadSessionEntity session : pending) {
             String sessionId = session.getSessionId();
             try {
                 if (attemptPurgeAndRemoveSession(sessionId, 1)) {
@@ -74,18 +75,18 @@ public class UploadSessionCleanupServiceImpl implements UploadSessionCleanupServ
     }
 
     /**
-     * 过期仍未 complete 的上传：删除目录内无 metadata 引用的对象并移除会话文档。
+     * 过期仍未 complete 的上传：删除目录内无 metadata 引用的对象并移除会话行。
      */
     private void cleanupAbandonedUploads() {
-        List<UploadSessionDoc> abandoned = mongoTemplate.find(
-                new Query(Criteria.where("status").is(VideoConstants.SESSION_UPLOADING)
-                        .and("expireAt").lt(LocalDateTime.now())),
-                UploadSessionDoc.class);
-        for (UploadSessionDoc session : abandoned) {
+        List<VideoUploadSessionEntity> abandoned = uploadSessionMapper.selectList(
+                new LambdaQueryWrapper<VideoUploadSessionEntity>()
+                        .eq(VideoUploadSessionEntity::getStatus, VideoConstants.SESSION_UPLOADING)
+                        .lt(VideoUploadSessionEntity::getExpireAt, LocalDateTime.now()));
+        for (VideoUploadSessionEntity session : abandoned) {
             String sessionId = session.getSessionId();
             try {
                 purgeUnreferencedObjectsUnderSession(sessionId);
-                mongoTemplate.remove(session);
+                uploadSessionMapper.deleteById(sessionId);
                 log.info("已清理过期未完成上传: sessionId={}", sessionId);
             } catch (Exception e) {
                 log.warn("清理过期上传失败: sessionId={}, error={}", sessionId, e.getMessage());
@@ -94,12 +95,12 @@ public class UploadSessionCleanupServiceImpl implements UploadSessionCleanupServ
     }
 
     /**
-     * 删除分片、校验无 chunk 残留、移除会话文档。
+     * 删除分片、校验无 chunk 残留、移除会话行。
      *
      * @param maxAttempts 含首次在内的尝试次数
      */
     private boolean attemptPurgeAndRemoveSession(String sessionId, int maxAttempts) {
-        UploadSessionDoc session = mongoTemplate.findById(sessionId, UploadSessionDoc.class);
+        VideoUploadSessionEntity session = uploadSessionMapper.selectById(sessionId);
         for (int attempt = 0; attempt < maxAttempts; attempt++) {
             if (attempt > 0) {
                 sleepQuietly(RETRY_DELAY_MS);
@@ -109,11 +110,7 @@ public class UploadSessionCleanupServiceImpl implements UploadSessionCleanupServ
             }
             deleteRemainingChunkObjectsByListing(sessionId);
             if (!hasRemainingChunks(sessionId)) {
-                if (session != null) {
-                    mongoTemplate.remove(session);
-                } else {
-                    mongoTemplate.remove(new Query(Criteria.where("_id").is(sessionId)), UploadSessionDoc.class);
-                }
+                uploadSessionMapper.deleteById(sessionId);
                 return true;
             }
         }
@@ -139,9 +136,10 @@ public class UploadSessionCleanupServiceImpl implements UploadSessionCleanupServ
 
     private Set<String> findReferencedRawObjects(List<String> objects) {
         Set<String> referenced = new HashSet<>();
-        List<VideoMetaDoc> metas = mongoTemplate.find(
-                new Query(Criteria.where("rawObject").in(objects)), VideoMetaDoc.class);
-        for (VideoMetaDoc meta : metas) {
+        List<VideoMetaEntity> metas = metaMapper.selectList(
+                new LambdaQueryWrapper<VideoMetaEntity>()
+                        .in(VideoMetaEntity::getRawObject, objects));
+        for (VideoMetaEntity meta : metas) {
             if (StringUtils.hasText(meta.getRawObject())) {
                 referenced.add(meta.getRawObject());
             }
@@ -207,13 +205,13 @@ public class UploadSessionCleanupServiceImpl implements UploadSessionCleanupServ
     }
 
     private void markCleanupFailed(String sessionId, String reason) {
-        UploadSessionDoc session = mongoTemplate.findById(sessionId, UploadSessionDoc.class);
+        VideoUploadSessionEntity session = uploadSessionMapper.selectById(sessionId);
         if (session == null) {
             return;
         }
         session.setStatus(VideoConstants.SESSION_CLEANUP_FAILED);
         session.setFailReason(reason);
-        mongoTemplate.save(session);
+        uploadSessionMapper.updateById(session);
         log.warn("上传会话标记 cleanup_failed: sessionId={}", sessionId);
     }
 

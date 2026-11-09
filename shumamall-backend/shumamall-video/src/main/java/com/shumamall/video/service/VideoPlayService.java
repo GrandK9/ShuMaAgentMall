@@ -27,7 +27,7 @@ public interface VideoPlayService {
     VideoMetaVO getMeta(Long videoId);
 
     /**
-     * 上报播放进度（高频写 Redis，定时落库 MongoDB）。
+     * 上报播放进度（高频写 Redis，定时落库 MySQL）。
      *
      * @param userId 用户 ID
      * @param dto    进度参数
@@ -35,7 +35,7 @@ public interface VideoPlayService {
     void reportProgress(Long userId, VideoProgressReqDTO dto);
 
     /**
-     * 查询播放进度（Redis 优先，MongoDB 兜底）。
+     * 查询播放进度（Redis 优先，MySQL 兜底）。
      *
      * @param userId  用户 ID
      * @param videoId 视频 ID

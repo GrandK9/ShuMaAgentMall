@@ -17,11 +17,11 @@
         server-addr: localhost:8848
         # 不硬编码 ip：写死的 192.168.1.x 与本机实际地址不符，会把不可达地址
         # 注册进 Nacos 导致跨服务调用失败；留空由 Nacos 自动探测本机地址。
-  data:
-    mongodb:
-      # 容器开启了 root 认证（见 docker-compose.yml 的 MONGO_INITDB_ROOT_*），
-      # 必须带凭据并指定 authSource=admin，否则报 error 13 Unauthorized
-      uri: mongodb://shumamall:shumamall123@localhost:27017/shumamall_video?authSource=admin
+  datasource:
+    url: jdbc:mysql://localhost:3306/shumamall?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&allowMultiQueries=true
+    username: root
+    password: root123
+    driver-class-name: com.mysql.cj.jdbc.Driver
   servlet:
     multipart:
       max-file-size: 2GB

@@ -8,7 +8,7 @@
 |---|---|
 | 基础框架 | JDK 21 · Spring Boot 3.5 · Spring Cloud 2025 · Spring Cloud Alibaba 2025 |
 | 注册与配置 | Nacos |
-| 存储 | MySQL · Redis · MongoDB · Elasticsearch · MinIO |
+| 存储 | MySQL · Redis · Elasticsearch · MinIO |
 | 消息与事务 | RabbitMQ · Seata（AT 模式） |
 | AI | Spring AI + DeepSeek（RAG / Tool Calling / SSE 流式） |
 | 前端 | Vue 3 · Element Plus · Vite |
@@ -19,14 +19,14 @@
 |---|---|---|
 | shumamall-gateway | 8080 | 统一网关：路由转发、限流、客户端 IP 透传 |
 | shumamall-iam | 8081 | 管理域：认证 + 用户 + RBAC/审计 + 仪表盘/上传 + 系统字典 |
-| shumamall-product | 8083 | 商品 / 分类 / 品牌 / SKU + 评论区（MongoDB） |
+| shumamall-product | 8083 | 商品 / 分类 / 品牌 / SKU + 评论区（MySQL） |
 | shumamall-order | 8084 | 购物车与订单，状态机 |
 | shumamall-payment | 8085 | 支付与退款 |
 | shumamall-search | 8087 | ES 全文检索（IK 中文分词） |
 | shumamall-agent | 8088 | AI 导购：混合检索 + 工具调用 + 流式回复 |
 | shumamall-video | 8092 | 视频上传、HLS 切片与播放 |
 
-Maven 仍保留 `shumamall-auth`、`shumamall-user`、`shumamall-permission`、`shumamall-admin`、`shumamall-dict`、`shumamall-comment` 等库模块，由 **shumamall-iam**（及 product 等）合并打进同一可执行 jar。
+Maven 仍保留 `shumamall-auth`、`shumamall-user`、`shumamall-permission`、`shumamall-admin`、`shumamall-dict` 等库模块，由 **shumamall-iam**（及 product 等）合并打进同一可执行 jar；评论区源码在 **shumamall-product** 内（`com.shumamall.product.comment`）。
 
 ## 主要特性
 
@@ -49,7 +49,7 @@ Maven 仍保留 `shumamall-auth`、`shumamall-user`、`shumamall-permission`、`
 shumamall-backend/        Maven 多模块后端（网关 + 8 个可部署进程）
 shumamall-frontend/       pc-user 用户端 / pc-admin 管理端
 nacos-config/             Nacos 配置模板与发布脚本
-mysql-init/ mongo-init/   数据库初始化脚本
+mysql-init/               数据库初始化脚本（含评论/审计/视频文档表 document_tables.sql）
 es-plugins/               IK 分词插件下载脚本（插件本体约 9.5MB，属第三方二进制不入库）
 ```
 
@@ -61,7 +61,7 @@ es-plugins/               IK 分词插件下载脚本（插件本体约 9.5MB，
 # 1. 下载 ES 的 IK 分词插件（首次克隆后执行一次；插件是第三方二进制，不入库）
 powershell -ExecutionPolicy Bypass -File es-plugins\fetch-ik.ps1
 
-# 2. 启动基础设施（MySQL / Redis / Nacos / RabbitMQ / MinIO / MongoDB / ES / Seata）
+# 2. 启动基础设施（MySQL / Redis / Nacos / RabbitMQ / MinIO / ES / Seata）
 docker compose up -d
 
 # 3. 发布 Nacos 配置：nacos-config/ 下是模板，填入真实值后用 publish.ps1 发布

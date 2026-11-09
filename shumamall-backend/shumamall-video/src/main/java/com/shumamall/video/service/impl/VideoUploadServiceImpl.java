@@ -8,8 +8,11 @@ import com.shumamall.video.dto.CompleteUploadRespDTO;
 import com.shumamall.video.dto.InitUploadReqDTO;
 import com.shumamall.video.dto.InitUploadRespDTO;
 import com.shumamall.video.dto.UploadRespDTO;
-import com.shumamall.video.entity.UploadSessionDoc;
-import com.shumamall.video.entity.VideoMetaDoc;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.shumamall.video.dao.VideoMetaMapper;
+import com.shumamall.video.dao.VideoUploadSessionMapper;
+import com.shumamall.video.entity.VideoMetaEntity;
+import com.shumamall.video.entity.VideoUploadSessionEntity;
 import com.shumamall.video.service.UploadSessionCleanupService;
 import com.shumamall.video.service.VideoProcessService;
 import com.shumamall.video.service.VideoUploadService;
@@ -23,11 +26,7 @@ import io.minio.StatObjectArgs;
 import io.minio.StatObjectResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.FindAndModifyOptions;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -48,7 +47,7 @@ import java.util.stream.Collectors;
 /**
  * 视频上传服务实现。
  * <p>
- * 分片上传：initUpload（MongoDB 会话，TTL 24h）→ uploadChunk（MinIO raw 分片）
+ * 分片上传：initUpload（MySQL 会话，expireAt 24h）→ uploadChunk（MinIO raw 分片）
  * → completeUpload（composeObject 合并 → 创建 meta → 清理分片与会话 → 异步转码）。
  * 单次直传：评论区小文件直接落 raw → 同步校验 + 切片。
  */
@@ -63,7 +62,8 @@ public class VideoUploadServiceImpl implements VideoUploadService {
     /** 片号不连续或字节数对不上时拒绝合并，会话退回 uploading，已传的片可以续传。 */
     static final String CHUNK_LAYOUT_MISMATCH = "分片不完整或大小不符，无法合并";
 
-    private final MongoTemplate mongoTemplate;
+    private final VideoUploadSessionMapper uploadSessionMapper;
+    private final VideoMetaMapper metaMapper;
     private final MinioClient minioClient;
     private final MinioConfig minioConfig;
     private final VideoProcessService videoProcessService;
@@ -74,7 +74,7 @@ public class VideoUploadServiceImpl implements VideoUploadService {
         String limitType = resolveLimitType(dto.getUploaderType());
         validateSize(dto.getFileSize(), limitType);
 
-        UploadSessionDoc session = new UploadSessionDoc();
+        VideoUploadSessionEntity session = new VideoUploadSessionEntity();
         session.setSessionId(UUID.randomUUID().toString().replace("-", ""));
         session.setFileName(dto.getFileName());
         session.setFileSize(dto.getFileSize());
@@ -88,7 +88,7 @@ public class VideoUploadServiceImpl implements VideoUploadService {
         session.setStatus(VideoConstants.SESSION_UPLOADING);
         session.setCreatedAt(LocalDateTime.now());
         session.setExpireAt(LocalDateTime.now().plusHours(VideoConstants.SESSION_TTL_HOURS));
-        mongoTemplate.insert(session);
+        uploadSessionMapper.insert(session);
 
         log.info("初始化分片上传会话: sessionId={}, fileName={}, size={}, limitType={}",
                 session.getSessionId(), dto.getFileName(), dto.getFileSize(), limitType);
@@ -98,7 +98,7 @@ public class VideoUploadServiceImpl implements VideoUploadService {
 
     @Override
     public void uploadChunk(String sessionId, Integer chunkIndex, MultipartFile data, String md5) {
-        UploadSessionDoc session = requireSession(sessionId);
+        VideoUploadSessionEntity session = requireSession(sessionId);
         if (!VideoConstants.SESSION_UPLOADING.equals(session.getStatus())) {
             throw new BusinessException(ResultCode.PARAM_INVALID, "会话已处理完成，无法继续上传");
         }
@@ -134,12 +134,12 @@ public class VideoUploadServiceImpl implements VideoUploadService {
             throw new BusinessException(ResultCode.PARAM_INVALID, CHUNK_CHECKSUM_MISMATCH);
         }
         session.getChunks().add(chunkIndex);
-        mongoTemplate.save(session);
+        uploadSessionMapper.updateById(session);
     }
 
     @Override
     public CompleteUploadRespDTO completeUpload(String sessionId) {
-        UploadSessionDoc session = claimSessionForMerge(sessionId);
+        VideoUploadSessionEntity session = claimSessionForMerge(sessionId);
         if (session == null) {
             return buildIdempotentCompleteResponse(sessionId);
         }
@@ -174,7 +174,7 @@ public class VideoUploadServiceImpl implements VideoUploadService {
             log.warn("合并已完成但会话状态未从 merging 更新为 uploaded: sessionId={}", sessionId);
         }
 
-        VideoMetaDoc meta = videoProcessService.createMetaForMergedUpload(sessionId);
+        VideoMetaEntity meta = videoProcessService.createMetaForMergedUpload(sessionId);
         uploadSessionCleanupService.finalizeSessionAfterMerge(sessionId);
         videoProcessService.processSession(sessionId, meta.getVideoId());
 
@@ -183,8 +183,8 @@ public class VideoUploadServiceImpl implements VideoUploadService {
     }
 
     @Override
-    public UploadSessionDoc getSession(String sessionId) {
-        UploadSessionDoc session = mongoTemplate.findById(sessionId, UploadSessionDoc.class);
+    public VideoUploadSessionEntity getSession(String sessionId) {
+        VideoUploadSessionEntity session = uploadSessionMapper.selectById(sessionId);
         if (session == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "上传会话不存在或已过期");
         }
@@ -228,8 +228,8 @@ public class VideoUploadServiceImpl implements VideoUploadService {
     /**
      * 查询会话并校验存在。
      */
-    private UploadSessionDoc requireSession(String sessionId) {
-        UploadSessionDoc session = mongoTemplate.findById(sessionId, UploadSessionDoc.class);
+    private VideoUploadSessionEntity requireSession(String sessionId) {
+        VideoUploadSessionEntity session = uploadSessionMapper.selectById(sessionId);
         if (session == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "上传会话不存在或已过期");
         }
@@ -240,7 +240,7 @@ public class VideoUploadServiceImpl implements VideoUploadService {
      * 片号必须是 0 到最后一片，且除最后一片外每片都是约定的 5MB，各片大小之和等于初始化时的 fileSize。
      * 大小不符的片会从对象存储和片号列表里去掉，续传才不会把它当成已经完成。
      */
-    private void assertChunksComplete(UploadSessionDoc session) {
+    private void assertChunksComplete(VideoUploadSessionEntity session) {
         Long fileSize = session.getFileSize();
         if (fileSize == null || fileSize <= 0) {
             throw new BusinessException(ResultCode.PARAM_INVALID, "上传文件大小无效");
@@ -309,10 +309,11 @@ public class VideoUploadServiceImpl implements VideoUploadService {
                         sessionId, index, e.getMessage());
             }
         }
-        mongoTemplate.updateFirst(
-                Query.query(Criteria.where("_id").is(sessionId)),
-                new Update().pullAll("chunks", unique.toArray()),
-                UploadSessionDoc.class);
+        VideoUploadSessionEntity current = uploadSessionMapper.selectById(sessionId);
+        if (current != null && current.getChunks() != null) {
+            current.getChunks().removeAll(unique);
+            uploadSessionMapper.updateById(current);
+        }
     }
 
     private byte[] readChunk(MultipartFile data) {
@@ -363,38 +364,42 @@ public class VideoUploadServiceImpl implements VideoUploadService {
      *
      * @return 抢占成功时会话；未抢占到返回 null（由调用方做幂等或提示）
      */
-    private UploadSessionDoc claimSessionForMerge(String sessionId) {
-        Query query = new Query(Criteria.where("_id").is(sessionId)
-                .and("status").is(VideoConstants.SESSION_UPLOADING));
-        Update update = new Update().set("status", VideoConstants.SESSION_MERGING);
-        return mongoTemplate.findAndModify(query, update,
-                FindAndModifyOptions.options().returnNew(true),
-                UploadSessionDoc.class);
+    private VideoUploadSessionEntity claimSessionForMerge(String sessionId) {
+        LambdaUpdateWrapper<VideoUploadSessionEntity> wrapper = new LambdaUpdateWrapper<>();
+        wrapper.eq(VideoUploadSessionEntity::getSessionId, sessionId)
+                .eq(VideoUploadSessionEntity::getStatus, VideoConstants.SESSION_UPLOADING)
+                .set(VideoUploadSessionEntity::getStatus, VideoConstants.SESSION_MERGING);
+        if (uploadSessionMapper.update(null, wrapper) == 0) {
+            return null;
+        }
+        return uploadSessionMapper.selectById(sessionId);
     }
 
     /** 合并失败时释放 merging，允许客户端重试 complete。 */
     private void releaseMergeClaim(String sessionId) {
-        Query query = new Query(Criteria.where("_id").is(sessionId)
-                .and("status").is(VideoConstants.SESSION_MERGING));
-        Update update = new Update().set("status", VideoConstants.SESSION_UPLOADING);
-        mongoTemplate.updateFirst(query, update, UploadSessionDoc.class);
+        LambdaUpdateWrapper<VideoUploadSessionEntity> wrapper = new LambdaUpdateWrapper<>();
+        wrapper.eq(VideoUploadSessionEntity::getSessionId, sessionId)
+                .eq(VideoUploadSessionEntity::getStatus, VideoConstants.SESSION_MERGING)
+                .set(VideoUploadSessionEntity::getStatus, VideoConstants.SESSION_UPLOADING);
+        uploadSessionMapper.update(null, wrapper);
     }
 
     /** 合并成功后 merging → uploaded（条件更新）。 */
     private boolean markSessionUploaded(String sessionId) {
-        Query query = new Query(Criteria.where("_id").is(sessionId)
-                .and("status").is(VideoConstants.SESSION_MERGING));
-        Update update = new Update().set("status", VideoConstants.SESSION_UPLOADED);
-        return mongoTemplate.updateFirst(query, update, UploadSessionDoc.class).getModifiedCount() > 0;
+        LambdaUpdateWrapper<VideoUploadSessionEntity> wrapper = new LambdaUpdateWrapper<>();
+        wrapper.eq(VideoUploadSessionEntity::getSessionId, sessionId)
+                .eq(VideoUploadSessionEntity::getStatus, VideoConstants.SESSION_MERGING)
+                .set(VideoUploadSessionEntity::getStatus, VideoConstants.SESSION_UPLOADED);
+        return uploadSessionMapper.update(null, wrapper) > 0;
     }
 
     /**
      * 并发 complete 的幂等响应：已成功合并或已进入后台处理的会话直接返回当前状态，不再触发合并/转码。
      */
     private CompleteUploadRespDTO buildIdempotentCompleteResponse(String sessionId) {
-        UploadSessionDoc current = mongoTemplate.findById(sessionId, UploadSessionDoc.class);
+        VideoUploadSessionEntity current = uploadSessionMapper.selectById(sessionId);
         if (current == null) {
-            VideoMetaDoc meta = findMetaBySessionId(sessionId);
+            VideoMetaEntity meta = findMetaBySessionId(sessionId);
             if (meta != null) {
                 return new CompleteUploadRespDTO(sessionId, meta.getVideoId(), VideoConstants.SESSION_UPLOADED);
             }
@@ -405,7 +410,7 @@ public class VideoUploadServiceImpl implements VideoUploadService {
                 || VideoConstants.SESSION_PROCESSED.equals(status)) {
             Long videoId = current.getVideoId();
             if (videoId == null) {
-                VideoMetaDoc meta = findMetaBySessionId(sessionId);
+                VideoMetaEntity meta = findMetaBySessionId(sessionId);
                 videoId = meta != null ? meta.getVideoId() : null;
             }
             return new CompleteUploadRespDTO(sessionId, videoId, status);
@@ -417,7 +422,7 @@ public class VideoUploadServiceImpl implements VideoUploadService {
             throw new BusinessException(ResultCode.PARAM_INVALID, "上传会话已失败，请重新上传");
         }
         if (VideoConstants.SESSION_CLEANUP_FAILED.equals(status)) {
-            VideoMetaDoc meta = findMetaBySessionId(sessionId);
+            VideoMetaEntity meta = findMetaBySessionId(sessionId);
             if (meta != null) {
                 return new CompleteUploadRespDTO(sessionId, meta.getVideoId(), status);
             }
@@ -427,8 +432,8 @@ public class VideoUploadServiceImpl implements VideoUploadService {
         throw new BusinessException(ResultCode.PARAM_INVALID, "会话已处理完成，请勿重复提交");
     }
 
-    private VideoMetaDoc findMetaBySessionId(String sessionId) {
-        return mongoTemplate.findOne(
-                new Query(Criteria.where("sessionId").is(sessionId)), VideoMetaDoc.class);
+    private VideoMetaEntity findMetaBySessionId(String sessionId) {
+        return metaMapper.selectOne(new LambdaQueryWrapper<VideoMetaEntity>()
+                .eq(VideoMetaEntity::getSessionId, sessionId));
     }
 }

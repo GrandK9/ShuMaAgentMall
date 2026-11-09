@@ -4,7 +4,7 @@ import com.shumamall.video.dto.CompleteUploadRespDTO;
 import com.shumamall.video.dto.InitUploadReqDTO;
 import com.shumamall.video.dto.InitUploadRespDTO;
 import com.shumamall.video.dto.UploadRespDTO;
-import com.shumamall.video.entity.UploadSessionDoc;
+import com.shumamall.video.entity.VideoUploadSessionEntity;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
@@ -19,7 +19,7 @@ import org.springframework.web.multipart.MultipartFile;
 public interface VideoUploadService {
 
     /**
-     * 初始化分片上传会话（MongoDB 存会话，TTL 24h 自动过期）。
+     * 初始化分片上传会话（MySQL 存会话，expireAt 24h）。
      *
      * @param uploaderId 上传者用户 ID
      * @param dto        初始化参数
@@ -51,7 +51,7 @@ public interface VideoUploadService {
      * @param sessionId 会话 ID
      * @return 会话信息
      */
-    UploadSessionDoc getSession(String sessionId);
+    VideoUploadSessionEntity getSession(String sessionId);
 
     /**
      * 单次直传（评论区小文件：≤100MB / 60s，同步校验 + 切片后返回）。

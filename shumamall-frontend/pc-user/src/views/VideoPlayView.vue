@@ -14,7 +14,7 @@ import HlsPlayer from '../components/HlsPlayer.vue';
  * 由 HlsPlayer 的自定义 loader 在 m3u8 解析前把相对路径换成签名 URL
  * （video-hls 是私有 bucket，不带签名直接取分片会 403）。
  *
- * 断点续播：进度按「用户 + 视频」维度存在服务端（Redis 高频写 + 定时落 MongoDB），
+ * 断点续播：进度按「用户 + 视频」维度存在服务端（Redis 高频写 + 定时落 MySQL），
  * 因此必须登录才有续播；未登录时只播放、不上报。
  */
 

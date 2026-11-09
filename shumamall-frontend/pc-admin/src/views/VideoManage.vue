@@ -168,7 +168,7 @@ async function findResumableUpload(file: File): Promise<SavedUpload | null> {
       return saved;
     }
   } catch {
-    // 会话已过期（MongoDB TTL 24h 清理）或记录损坏 → 走全新上传
+    // 会话已过期（后台定时清理）或记录损坏 → 走全新上传
   }
   localStorage.removeItem(SESSION_STORAGE_KEY);
   return null;
