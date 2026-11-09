@@ -6,6 +6,7 @@ import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.elasticsearch.core.search.Hit;
 import com.shumamall.agent.search.document.ProductDoc;
 import com.shumamall.agent.search.dto.HybridSearchRequest;
+import com.shumamall.common.search.ProductSearchIndexNames;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -48,11 +49,12 @@ import java.util.Objects;
 @Service
 public class ProductHybridSearchService {
 
-    /** 商品索引名（与 ProductIndexService 保持一致） */
-    public static final String PRODUCT_INDEX = "shumamall_product";
+    /** 商品索引别名（由 search 服务灌库） */
+    public static final String PRODUCT_INDEX = ProductSearchIndexNames.PRODUCT_INDEX;
 
-    /** BM25 关键词检索字段（^n 为字段权重提升，品牌/分类用精确匹配字段提升可信度） */
-    private static final List<String> TEXT_FIELDS = List.of("name^3", "subtitle^2", "brand", "category", "description");
+    /** BM25 字段与 search 侧 multi_match 对齐 */
+    private static final List<String> TEXT_FIELDS = List.of(
+            "name^3", "name.ngram^0.5", "subtitle^2", "brandName", "categoryName", "description");
 
     /** 语义向量字段（对应索引 mapping 的 dense_vector） */
     private static final String EMBEDDING_FIELD = "embedding";

@@ -26,7 +26,7 @@ export interface PageResult<T> {
   records: T[];
 }
 
-/* ---------------- 仪表盘（shumamall-admin 8090） ---------------- */
+/* ---------------- 仪表盘（IAM 8081） ---------------- */
 
 /** 销售趋势项：后端按天聚合（GET /api/v1/admin/dashboard 的 salesTrend，日期升序） */
 export interface SalesTrendItem {
@@ -69,7 +69,7 @@ export interface ProductSku {
   status?: number;
 }
 
-/* ---------------- 上传（admin 8090） ---------------- */
+/* ---------------- 上传（IAM 8081） ---------------- */
 
 export interface UploadResult {
   fileUrl: string;
@@ -171,7 +171,7 @@ export interface PaymentRecord {
   createdAt?: string;
 }
 
-/* ---------------- 角色（shumamall-permission 8086） ---------------- */
+/* ---------------- 角色（IAM 8081） ---------------- */
 
 export interface Role {
   id: number;
@@ -181,7 +181,7 @@ export interface Role {
   permissionIds?: number[];
 }
 
-/* ---------------- 权限点（shumamall-permission 8086） ---------------- */
+/* ---------------- 权限点（IAM 8081） ---------------- */
 
 export interface Permission {
   id: number;
@@ -194,7 +194,7 @@ export interface Permission {
   status?: number;
 }
 
-/* ---------------- 菜单（shumamall-permission 8086） ---------------- */
+/* ---------------- 菜单（IAM 8081） ---------------- */
 
 export interface MenuItem {
   id: number;
@@ -204,7 +204,7 @@ export interface MenuItem {
   children?: MenuItem[];
 }
 
-/* ---------------- 审计日志（shumamall-permission 8086） ---------------- */
+/* ---------------- 审计日志（IAM 8081） ---------------- */
 
 /** 操作审计记录（GET /api/v1/admin/audit/logs） */
 export interface AuditLog {
@@ -225,7 +225,7 @@ export interface AuditLog {
   costMs?: number;
 }
 
-/* ---------------- 码表（shumamall-admin + dict 模块） ---------------- */
+/* ---------------- 码表（IAM 8081） ---------------- */
 
 export interface DictItem {
   /** 雪花 ID，大数时后端可能按字符串下发 */

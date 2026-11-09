@@ -18,9 +18,9 @@ import java.util.Set;
 /**
  * 权限服务内部控制器。
  * <p>
- * 实现 {@link com.shumamall.permission.api.PermissionApi} 定义的 Feign 接口，
- * 供其他微服务进行权限校验；
- * 另外提供审计日志上报入口（见 {@code AuditLogReporter}）。
+ * 实现 {@link com.shumamall.permission.api.PermissionApi} 的路径与语义，
+ * 供其它微服务 HTTP 调用；IAM 进程内优先走 {@code UserPermissionsLookup} 本地实现。
+ * 另提供审计 HTTP 上报入口（非 IAM 进程走 {@link com.shumamall.common.perm.spi.AuditLogSink}）。
  * <p>
  * 本路径不经过 {@code TokenFilter}（见 WebMvcConfig），供服务间无 token 直连调用，
  * 因此不能在此暴露任何「读取敏感数据」或「修改权限」的能力。

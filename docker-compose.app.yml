@@ -1,5 +1,5 @@
 # =============================================================================
-# 应用层编排：网关/认证/用户/商品/订单/支付/权限/管理聚合/搜索/Agent/视频/字典（与 shumamall-backend 各模块对应）
+# 应用层编排：网关/IAM/商品/订单/支付/搜索/Agent/视频（与 shumamall-backend 可部署模块对应）
 #
 # 与 docker-compose.yml（基础设施）分开的两个理由：
 #   1. 基础设施启动一次长期复用，应用服务要按功能子集反复重建，混在一起每次
@@ -16,19 +16,19 @@
 # -----------------------------------------------------------------------------
 # 按功能启动应用子集（profile）
 #
-#   最小可下单链路：网关 + 认证 + 用户 + 商品 + 订单 + 支付
+#   最小可下单链路：网关 + IAM（含登录/用户）+ 商品 + 订单 + 支付
 #     docker compose -f docker-compose.app.yml --profile core up -d --build
 #
 #   加搜索链路（ES 检索）：core + search，需要基础设施里的 elasticsearch、rabbitmq
 #     docker compose up -d mysql redis nacos elasticsearch rabbitmq
 #     docker compose -f docker-compose.app.yml --profile core --profile search up -d --build
 #
-#   加 AI 导购：core + search + agent
+#   加 AI 导购：core + search + agent（agent 只读 ES，索引灌库由 search + RabbitMQ 负责）
 #     docker compose -f docker-compose.app.yml \
 #       --profile core --profile search --profile agent up -d --build
 #
-#   后台管理相关：权限 + 管理端 + 视频 + 字典
-#     docker compose -f docker-compose.app.yml --profile admin up -d --build
+#   视频后台（管理域 RBAC/字典/仪表盘已在 core 的 IAM/8081）
+#     docker compose -f docker-compose.app.yml --profile video up -d --build
 #
 #   评论 API 随商品服务（8083）一起起，需基础设施 MongoDB
 #
@@ -144,16 +144,17 @@ services:
     environment:
       <<: *common-env
 
-  # ========================= 认证 =========================
-  auth:
+  # ========================= IAM（管理域：auth + user + permission + 仪表盘/上传/字典） =========================
+  # 管理域合并进程，Nacos 注册名 shumamall-iam；本地映射 8081
+  iam:
     <<: *app-base
     profiles: [core, all]
-    image: shumamall/auth:1.0.0
+    image: shumamall/iam:1.0.0
     build:
       context: ./shumamall-backend
       dockerfile: Dockerfile
       args:
-        MODULE: shumamall-auth
+        MODULE: shumamall-iam
         PORT: 8081
     ports:
       - "8081:8081"
@@ -162,27 +163,14 @@ services:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8081/actuator/health/liveness || exit 1"]
     environment:
       <<: *common-env
-      SPRING_DATASOURCE_URL: *ds-shumamall
-
-  # ========================= 用户 =========================
-  user:
-    <<: *app-base
-    profiles: [core, all]
-    image: shumamall/user:1.0.0
-    build:
-      context: ./shumamall-backend
-      dockerfile: Dockerfile
-      args:
-        MODULE: shumamall-user
-        PORT: 8082
-    ports:
-      - "8082:8082"
-    healthcheck:
-      <<: *healthcheck-base
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8082/actuator/health/liveness || exit 1"]
-    environment:
-      <<: *common-env
-      SPRING_DATASOURCE_URL: *ds-shumamall
+      SPRING_DATASOURCE_DYNAMIC_DATASOURCE_MASTER_URL: *ds-shumamall
+      SPRING_DATASOURCE_DYNAMIC_DATASOURCE_MASTER_USERNAME: root
+      SPRING_DATASOURCE_DYNAMIC_DATASOURCE_MASTER_PASSWORD: root123
+      SPRING_DATASOURCE_DYNAMIC_DATASOURCE_PERM_URL: *ds-shumamall-perm
+      SPRING_DATASOURCE_DYNAMIC_DATASOURCE_PERM_USERNAME: root
+      SPRING_DATASOURCE_DYNAMIC_DATASOURCE_PERM_PASSWORD: root123
+      # admin 模块上传（MinIO），与历史 admin 服务环境变量一致
+      MINIO_PUBLIC_ENDPOINT: http://localhost:9000
 
   # ========================= 商品 + 评论 =========================
   # 商品变更事件的生产者（RabbitMQ），并作为 Seata 分支事务参与方；评论存 MongoDB
@@ -252,48 +240,6 @@ services:
       SPRING_DATASOURCE_URL: *ds-shumamall
       JAVA_OPTS: "-XX:MaxRAMPercentage=75 -Duser.timezone=Asia/Shanghai -Dfile.encoding=UTF-8 -Dseata.service.grouplist.default=seata:8091"
 
-  # ========================= 权限 =========================
-  # 独立库 shumamall_perm + MongoDB（审计日志）
-  permission:
-    <<: *app-base
-    profiles: [admin, all]
-    image: shumamall/permission:1.0.0
-    build:
-      context: ./shumamall-backend
-      dockerfile: Dockerfile
-      args:
-        MODULE: shumamall-permission
-        PORT: 8086
-    ports:
-      - "8086:8086"
-    healthcheck:
-      <<: *healthcheck-base
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8086/actuator/health/liveness || exit 1"]
-    environment:
-      <<: *common-env
-      SPRING_DATASOURCE_URL: *ds-shumamall-perm
-
-  # ========================= 管理端聚合（仪表盘、上传等） =========================
-  admin:
-    <<: *app-base
-    profiles: [admin, all]
-    image: shumamall/admin:1.0.0
-    build:
-      context: ./shumamall-backend
-      dockerfile: Dockerfile
-      args:
-        MODULE: shumamall-admin
-        PORT: 8090
-    ports:
-      - "8090:8090"
-    healthcheck:
-      <<: *healthcheck-base
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8090/actuator/health/liveness || exit 1"]
-    environment:
-      <<: *common-env
-      SPRING_DATASOURCE_URL: *ds-shumamall
-      MINIO_PUBLIC_ENDPOINT: http://localhost:9000
-
   # ========================= 搜索（ES 商品检索） =========================
   search:
     <<: *app-base
@@ -314,7 +260,7 @@ services:
       <<: *common-env
 
   # ========================= AI 导购 =========================
-  # 依赖 ES 检索 + RabbitMQ 索引同步；DeepSeek / 向量模型密钥由 Nacos 下发
+  # 依赖 ES Hybrid 检索（索引维护在 search 服务）；DeepSeek / 向量模型密钥由 Nacos 下发
   agent:
     <<: *app-base
     profiles: [agent, all]
@@ -338,7 +284,7 @@ services:
   # ========================= 视频 =========================
   video:
     <<: *app-base
-    profiles: [admin, all]
+    profiles: [video, all]
     image: shumamall/video:1.0.0
     mem_limit: 768m
     build:
@@ -359,25 +305,6 @@ services:
       # 预签名 URL Host 为本机 localhost:9000；容器内 SDK 经 OkHttp 转发到 minio:9000 再签名
       MINIO_PUBLIC_ENDPOINT: http://localhost:9000
 
-  # ========================= 字典 =========================
-  dict:
-    <<: *app-base
-    profiles: [admin, all]
-    image: shumamall/dict:1.0.0
-    build:
-      context: ./shumamall-backend
-      dockerfile: Dockerfile
-      args:
-        MODULE: shumamall-dict
-        PORT: 8093
-    ports:
-      - "8093:8093"
-    healthcheck:
-      <<: *healthcheck-base
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8093/actuator/health/liveness || exit 1"]
-    environment:
-      <<: *common-env
-      SPRING_DATASOURCE_URL: *ds-shumamall
 
 # 与 docker-compose.yml 共用同一张网络：
 # 由 docker-compose.yml 创建，本文件只引用（external），所以要先起基础设施。

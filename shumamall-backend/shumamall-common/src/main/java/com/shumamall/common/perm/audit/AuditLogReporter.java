@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * 审计日志上报器（业务服务侧）。
  * <p>
  * 由 {@code PermissionAspect} 在方法执行结束后调用，把审计记录异步投递给
- * shumamall-permission 服务（唯一持有 MongoDB 审计集合的服务）。
+ * shumamall-iam 管理域进程（审计日志落 MongoDB）。
  * <p>
  * <b>为什么是「上报」而不是各服务直连 MongoDB：</b>
  * 挂 {@code @RequirePermission} 的有 product / order / payment / video 四个服务，

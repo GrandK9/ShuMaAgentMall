@@ -15,14 +15,16 @@ export default defineConfig({
       '/api/v1/admin/orders': { target: 'http://127.0.0.1:8084', changeOrigin: true },
       '/api/v1/admin/seckill': { target: 'http://127.0.0.1:8084', changeOrigin: true },
       '/api/v1/admin/payment': { target: 'http://127.0.0.1:8085', changeOrigin: true },
+      // IAM 合并进程（8081）：auth + user + permission（菜单 / 按钮权限 / 角色审计）
       '/api/v1/admin/permission': { target: 'http://127.0.0.1:8081', changeOrigin: true },
       '/api/v1/admin/role': { target: 'http://127.0.0.1:8081', changeOrigin: true },
       '/api/v1/admin/audit': { target: 'http://127.0.0.1:8081', changeOrigin: true },
       '/permission': { target: 'http://127.0.0.1:8081', changeOrigin: true },
-      '/api/v1/admin/dict': { target: 'http://127.0.0.1:8090', changeOrigin: true },
-      '/api/v1/dict': { target: 'http://127.0.0.1:8090', changeOrigin: true },
-      '/api/v1/admin/dashboard': { target: 'http://127.0.0.1:8090', changeOrigin: true },
-      '/api/v1/admin/upload': { target: 'http://127.0.0.1:8090', changeOrigin: true },
+      // 仪表盘 / 字典 / 上传已并入 IAM（8081），与登录、RBAC 同进程
+      '/api/v1/admin/dict': { target: 'http://127.0.0.1:8081', changeOrigin: true },
+      '/api/v1/dict': { target: 'http://127.0.0.1:8081', changeOrigin: true },
+      '/api/v1/admin/dashboard': { target: 'http://127.0.0.1:8081', changeOrigin: true },
+      '/api/v1/admin/upload': { target: 'http://127.0.0.1:8081', changeOrigin: true },
       // 评论已并入商品服务（8083）
       '/api/v1/admin/comment': { target: 'http://127.0.0.1:8083', changeOrigin: true },
       // search 服务（8087）：索引状态查询与全量重建（/api/v1/search/index/**）

@@ -112,7 +112,7 @@ export interface Category {
   children?: Category[];
 }
 
-/* ---------------- 用户（shumamall-user） ---------------- */
+/* ---------------- 用户（IAM 8081） ---------------- */
 
 export interface UserInfo {
   id: number;
@@ -264,7 +264,7 @@ export interface SeckillResult {
   message?: string;
 }
 
-/* ---------------- 地址（shumamall-user） ---------------- */
+/* ---------------- 地址（IAM 8081） ---------------- */
 
 export interface Address {
   id: number;

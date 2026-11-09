@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shumamall.agent.dto.ProductItemDTO;
 import com.shumamall.agent.search.document.ProductDoc;
 import com.shumamall.agent.search.dto.HybridSearchRequest;
-import com.shumamall.agent.search.embedding.ProductEmbeddingService;
+import com.shumamall.embedding.ProductEmbeddingService;
 import com.shumamall.agent.search.service.ProductHybridSearchService;
 import com.shumamall.agent.search.service.SearchFallbackService;
 import org.junit.jupiter.api.BeforeEach;
@@ -63,10 +63,9 @@ class HybridSearchToolTest {
         doc.setId(1L);
         doc.setName("小米14");
         doc.setSubtitle("徕卡影像");
-        doc.setBrand("小米");
-        doc.setCategory("手机");
-        doc.setPrice(new BigDecimal("3999"));
-        doc.setStock(50);
+        doc.setBrandName("小米");
+        doc.setCategoryName("手机");
+        doc.setPrice(3999.0);
         doc.setSalesVolume(5000);
         doc.setEmbedding(List.of(9.9f)); // 应被裁剪掉
         when(hybridSearchService.search(any(HybridSearchRequest.class))).thenReturn(List.of(doc));

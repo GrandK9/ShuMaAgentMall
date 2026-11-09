@@ -54,7 +54,7 @@
               predicates:
                 - Path=/api/v1/user/product/**
             - id: user-service
-              uri: lb://shumamall-user
+              uri: lb://shumamall-iam
               predicates:
                 - Path=/api/v1/user/**
             - id: categories-service
@@ -74,11 +74,11 @@
               predicates:
                 - Path=/api/v1/admin/brand/**
             - id: admin-dashboard-service
-              uri: lb://shumamall-admin
+              uri: lb://shumamall-iam
               predicates:
                 - Path=/api/v1/admin/dashboard/**
             - id: admin-upload-service
-              uri: lb://shumamall-admin
+              uri: lb://shumamall-iam
               predicates:
                 - Path=/api/v1/admin/upload/**
             - id: admin-permission-service
@@ -147,11 +147,11 @@
               predicates:
                 - Path=/api/v1/search/**
             - id: dict-service
-              uri: lb://shumamall-admin
+              uri: lb://shumamall-iam
               predicates:
                 - Path=/api/v1/dict/**
             - id: admin-dict-service
-              uri: lb://shumamall-admin
+              uri: lb://shumamall-iam
               predicates:
                 - Path=/api/v1/admin/dict/**
 

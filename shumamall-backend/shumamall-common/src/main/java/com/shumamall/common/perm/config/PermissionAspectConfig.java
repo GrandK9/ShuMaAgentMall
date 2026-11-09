@@ -1,7 +1,11 @@
 package com.shumamall.common.perm.config;
 
 import com.shumamall.common.perm.aspect.PermissionAspect;
-import com.shumamall.common.perm.audit.AuditLogReporter;
+import com.shumamall.common.perm.spi.AuditLogSink;
+import com.shumamall.common.perm.spi.RemoteAuditLogSink;
+import com.shumamall.common.perm.spi.RemoteUserPermissionsLookup;
+import com.shumamall.common.perm.spi.UserPermissionsLookup;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.cloud.client.discovery.DiscoveryClient;
@@ -16,7 +20,7 @@ import org.springframework.web.client.RestTemplate;
  * 避免在网关（WebFlux）等不含 spring-web 的模块中加载报错。
  */
 @Configuration
-@ConditionalOnClass({RestTemplate.class, DiscoveryClient.class})
+@ConditionalOnClass(RestTemplate.class)
 public class PermissionAspectConfig {
 
     @Bean
@@ -25,19 +29,26 @@ public class PermissionAspectConfig {
         return new RestTemplate();
     }
 
-    /**
-     * 审计上报器。线程池在首次上报时才真正创建线程，无 {@code @RequirePermission} 调用的服务零开销。
-     */
     @Bean
-    @ConditionalOnMissingBean
-    public AuditLogReporter auditLogReporter(DiscoveryClient discoveryClient) {
-        return new AuditLogReporter(discoveryClient);
+    @ConditionalOnMissingBean(UserPermissionsLookup.class)
+    @ConditionalOnClass(DiscoveryClient.class)
+    public UserPermissionsLookup remoteUserPermissionsLookup(DiscoveryClient discoveryClient,
+                                                             RestTemplate restTemplate) {
+        return new RemoteUserPermissionsLookup(discoveryClient, restTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(AuditLogSink.class)
+    @ConditionalOnClass(DiscoveryClient.class)
+    public AuditLogSink remoteAuditLogSink(DiscoveryClient discoveryClient) {
+        return new RemoteAuditLogSink(discoveryClient);
     }
 
     @Bean
     @ConditionalOnMissingBean
-    public PermissionAspect permissionAspect(DiscoveryClient discoveryClient, RestTemplate restTemplate,
-                                             AuditLogReporter auditLogReporter) {
-        return new PermissionAspect(discoveryClient, restTemplate, auditLogReporter);
+    @ConditionalOnBean({UserPermissionsLookup.class, AuditLogSink.class})
+    public PermissionAspect permissionAspect(UserPermissionsLookup userPermissionsLookup,
+                                             AuditLogSink auditLogSink) {
+        return new PermissionAspect(userPermissionsLookup, auditLogSink);
     }
 }

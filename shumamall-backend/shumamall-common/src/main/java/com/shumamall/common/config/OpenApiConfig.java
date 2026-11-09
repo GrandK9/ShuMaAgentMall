@@ -11,23 +11,17 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * 各服务共用的 OpenAPI（Swagger）文档配置。
+ * 各 WebMVC 服务共用的 OpenAPI（Swagger）文档配置。
  * <p>
- * 放在 common 里靠 {@code scanBasePackages = "com.shumamall"} 被各服务扫到，
- * 避免 12 个服务各写一份内容雷同的配置类。
+ * 随 {@code scanBasePackages} 包含 {@code com.shumamall.common} 的进程自动生效，
+ * 各服务只需引入 springdoc starter，不必重复写 JWT Bearer 等说明。
  * <p>
- * {@code @ConditionalOnClass(OpenAPI)} 是必需的：gateway 是 WebFlux 应用且未引入
- * springdoc（webmvc-ui 与 WebFlux 互斥），没有这个条件，Spring 扫到本类时会因
- * 找不到 {@code io.swagger.v3.oas.models.OpenAPI} 直接启动失败。
- * <p>
- * 访问地址：{@code http://localhost:<port>/swagger-ui.html}，
- * 原始文档：{@code http://localhost:<port>/v3/api-docs}。
+ * {@code @ConditionalOnClass(OpenAPI)}：网关为 WebFlux 且不引 springdoc，避免扫到本类后缺类启动失败。
  */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnClass(OpenAPI.class)
 public class OpenApiConfig {
 
-    /** 与下方 SecurityScheme 名称一致，前端/调试时在 Authorize 里填 Bearer Token */
     private static final String BEARER_SCHEME = "bearerAuth";
 
     @Value("${spring.application.name:shumamall}")
@@ -41,7 +35,7 @@ public class OpenApiConfig {
                         .version("1.0.0")
                         .description("""
                                 数码商城微服务接口文档。写操作（POST/PUT/PATCH/DELETE）经网关时需要：
-                                1) 先调用 shumamall-auth 的登录接口拿到 accessToken；
+                                1) 先调用 shumamall-iam（/api/v1/auth/login）拿到 accessToken；
                                 2) 点右上角 Authorize 填入该 token；
                                 3) 写请求还需携带 X-Timestamp / X-Nonce / X-Sign 三个签名头，
                                    仅靠 Swagger UI 无法自动生成签名，建议用接口调试脚本验证写操作。

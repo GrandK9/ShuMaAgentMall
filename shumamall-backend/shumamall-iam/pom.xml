@@ -14,7 +14,7 @@
     <packaging>jar</packaging>
 
     <name>ShuMaMall IAM</name>
-    <description>身份与访问：auth + user + permission 合并部署</description>
+    <description>管理域合并部署：auth + user + permission + admin（仪表盘/上传）+ dict</description>
 
     <dependencies>
         <dependency>
@@ -30,6 +30,11 @@
         <dependency>
             <groupId>com.shumamall</groupId>
             <artifactId>shumamall-permission</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.shumamall</groupId>
+            <artifactId>shumamall-admin</artifactId>
             <version>${project.version}</version>
         </dependency>
 
@@ -81,10 +86,6 @@
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.shumamall</groupId>
-            <artifactId>shumamall-common</artifactId>
         </dependency>
     </dependencies>
 

@@ -5,8 +5,9 @@ import com.shumamall.common.auth.SecurityContext;
 import com.shumamall.common.exception.BusinessException;
 import com.shumamall.common.perm.annotation.RequirePermission;
 import com.shumamall.common.perm.audit.AuditLogDTO;
-import com.shumamall.common.perm.audit.AuditLogReporter;
 import com.shumamall.common.perm.audit.AuditResult;
+import com.shumamall.common.perm.spi.AuditLogSink;
+import com.shumamall.common.perm.spi.UserPermissionsLookup;
 import com.shumamall.common.result.ResultCode;
 import jakarta.servlet.ServletRequest;
 import jakarta.servlet.ServletResponse;
@@ -17,9 +18,6 @@ import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.reflect.MethodSignature;
-import org.springframework.cloud.client.ServiceInstance;
-import org.springframework.cloud.client.discovery.DiscoveryClient;
-import org.springframework.web.client.RestTemplate;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.multipart.MultipartFile;
@@ -33,16 +31,16 @@ import java.util.*;
  * 权限校验 + 操作审计 AOP 切面。
  * <p>
  * 环绕标注了 {@link RequirePermission} 的方法：**执行前**校验当前用户的权限，
- * **执行后**无论成功、失败还是被拒绝，都上报一条审计记录（见 {@link AuditLogReporter}）。
+ * **执行后**无论成功、失败还是被拒绝，都上报一条审计记录（见 {@link AuditLogSink}）。
  * <p>
  * 从 {@code @Before} 改为 {@code @Around} 的原因：审计必须记录「这次操作到底执行成功没有」，
  * 前置通知拿不到方法返回值，也无法区分「校验通过后业务抛异常」与「校验未通过」——
  * 这两类在审计里的含义完全不同（前者是被允许但失败的操作，后者是越权尝试）。
  * <p>
- * 由于 common 模块不引入 Feign 依赖的完整 Web 环境，这里通过
- * {@link RestTemplate} + {@link DiscoveryClient} 直接调用 permission 服务的内部接口。
+ * 权限与审计通过 {@link UserPermissionsLookup}、{@link AuditLogSink} 注入：
+ * IAM 进程内为本地实现，其它服务为 HTTP 访问 IAM。
  * <p>
- * <b>审计失败不影响业务</b>：上报是异步 + best-effort，见 {@link AuditLogReporter}。
+ * <b>审计失败不影响业务</b>：上报是异步 + best-effort。
  */
 @Slf4j
 @Aspect
@@ -53,15 +51,12 @@ public class PermissionAspect {
     /** 入参 JSON 的最大留存长度，避免大 body（如批量导入）把审计文档撑爆 */
     private static final int PARAMS_MAX_LENGTH = 500;
 
-    private final DiscoveryClient discoveryClient;
-    private final RestTemplate restTemplate;
-    private final AuditLogReporter auditLogReporter;
+    private final UserPermissionsLookup userPermissionsLookup;
+    private final AuditLogSink auditLogSink;
 
-    public PermissionAspect(DiscoveryClient discoveryClient, RestTemplate restTemplate,
-                            AuditLogReporter auditLogReporter) {
-        this.discoveryClient = discoveryClient;
-        this.restTemplate = restTemplate;
-        this.auditLogReporter = auditLogReporter;
+    public PermissionAspect(UserPermissionsLookup userPermissionsLookup, AuditLogSink auditLogSink) {
+        this.userPermissionsLookup = userPermissionsLookup;
+        this.auditLogSink = auditLogSink;
     }
 
     /**
@@ -92,7 +87,7 @@ public class PermissionAspect {
         }
 
         // 从 permission 服务获取用户权限
-        Set<String> userPermissions = getUserPermissions(userId);
+        Set<String> userPermissions = userPermissionsLookup.getPermissions(userId);
         if (userPermissions == null || userPermissions.isEmpty()) {
             log.warn("权限校验失败：userId={} 没有任何权限", userId);
             audit(joinPoint, userId, requiredPermissions, AuditResult.FORBIDDEN, startMs);
@@ -135,7 +130,7 @@ public class PermissionAspect {
      * 本方法自身也吞掉所有异常：审计是旁路能力，任何构造失败都不应把已经执行完的业务操作变成失败。
      */
     private void audit(JoinPoint joinPoint, Long userId, String[] actions, String result, long startMs) {
-        if (auditLogReporter == null) {
+        if (auditLogSink == null) {
             return;
         }
         try {
@@ -156,7 +151,7 @@ public class PermissionAspect {
             }
             dto.setParams(serializeArgs(joinPoint.getArgs()));
 
-            auditLogReporter.report(dto);
+            auditLogSink.report(dto);
         } catch (Exception e) {
             log.warn("组装审计记录失败（不影响业务）: {}", e.getMessage());
         }
@@ -209,26 +204,4 @@ public class PermissionAspect {
         }
     }
 
-    /**
-     * 通过 RestTemplate 调用 permission 服务获取用户权限。
-     */
-    private Set<String> getUserPermissions(Long userId) {
-        try {
-            List<ServiceInstance> instances = discoveryClient.getInstances("shumamall-iam");
-            if (instances == null || instances.isEmpty()) {
-                log.warn("permission 服务不可用，跳过权限校验");
-                return Collections.emptySet();
-            }
-            ServiceInstance instance = instances.get(0);
-            String url = "http://" + instance.getHost() + ":" + instance.getPort()
-                    + "/api/permission/internal/getUserPermissions?userId=" + userId;
-
-            @SuppressWarnings("unchecked")
-            Set<String> permissions = restTemplate.getForObject(url, Set.class);
-            return permissions != null ? permissions : Collections.emptySet();
-        } catch (Exception e) {
-            log.warn("调用 permission 服务获取权限失败: {}", e.getMessage());
-            return Collections.emptySet();
-        }
-    }
 }

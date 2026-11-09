@@ -11,7 +11,7 @@ import org.springframework.cloud.openfeign.EnableFeignClients;
  * 基于 Elasticsearch 提供商品全文检索/排序/过滤 API，
  * 数据来源：全量重建（管理端触发）+ 增量同步（RabbitMQ 消费商品变更）。
  */
-@SpringBootApplication
+@SpringBootApplication(scanBasePackages = "com.shumamall")
 @EnableFeignClients
 @EnableRabbit
 public class SearchApplication {

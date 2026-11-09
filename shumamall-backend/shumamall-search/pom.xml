@@ -89,6 +89,12 @@
             <groupId>com.shumamall</groupId>
             <artifactId>shumamall-common</artifactId>
         </dependency>
+
+        <!-- 商品向量化（灌库写 ES embedding 字段） -->
+        <dependency>
+            <groupId>com.shumamall</groupId>
+            <artifactId>shumamall-embedding</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

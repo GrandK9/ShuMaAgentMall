@@ -2,6 +2,8 @@ package com.shumamall.search.document;
 
 import lombok.Data;
 
+import java.util.List;
+
 /**
  * 商品 ES 索引文档模型（shumamall_product_search）。
  * <p>
@@ -55,4 +57,7 @@ public class ProductDoc {
 
     /** 创建时间（ISO-8601，排序用） */
     private String createdAt;
+
+    /** 语义向量（Agent Hybrid 检索 KNN 用） */
+    private List<Float> embedding;
 }

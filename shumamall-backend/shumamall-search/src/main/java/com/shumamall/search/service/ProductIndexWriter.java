@@ -7,6 +7,8 @@ import co.elastic.clients.elasticsearch.core.BulkRequest;
 import co.elastic.clients.elasticsearch.core.BulkResponse;
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
 import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
+import com.shumamall.embedding.ProductEmbeddingService;
+import com.shumamall.embedding.ProductEmbeddingTexts;
 import com.shumamall.common.exception.BusinessException;
 import com.shumamall.common.result.PageResult;
 import com.shumamall.common.result.R;
@@ -55,6 +57,7 @@ public class ProductIndexWriter {
     private final BrandFeignClient brandFeignClient;
     private final ElasticsearchClient esClient;
     private final ProductIndexService indexService;
+    private final ProductEmbeddingService embeddingService;
     private final RedissonClient redissonClient;
     private final int batchSize;
 
@@ -63,6 +66,7 @@ public class ProductIndexWriter {
                               BrandFeignClient brandFeignClient,
                               ElasticsearchClient esClient,
                               ProductIndexService indexService,
+                              ProductEmbeddingService embeddingService,
                               RedissonClient redissonClient,
                               @Value("${shumamall.search.index-batch-size:100}") int batchSize) {
         this.productFeignClient = productFeignClient;
@@ -70,6 +74,7 @@ public class ProductIndexWriter {
         this.brandFeignClient = brandFeignClient;
         this.esClient = esClient;
         this.indexService = indexService;
+        this.embeddingService = embeddingService;
         this.redissonClient = redissonClient;
         this.batchSize = batchSize <= 0 ? DEFAULT_PAGE_SIZE : batchSize;
     }
@@ -299,6 +304,9 @@ public class ProductIndexWriter {
         doc.setIsHot(item.getIsHot() != null && item.getIsHot() == 1);
         doc.setMainImage(item.getMainImage());
         doc.setCreatedAt(item.getCreatedAt() == null ? null : item.getCreatedAt().format(DATE_FORMATTER));
+        String embedText = ProductEmbeddingTexts.joinDocument(
+                doc.getName(), doc.getSubtitle(), doc.getBrandName(), doc.getCategoryName());
+        doc.setEmbedding(embeddingService.embed(embedText));
         return doc;
     }
 

@@ -75,7 +75,8 @@ services:
     mem_limit: 256m
     ports:
       - "5672:5672"    # AMQP
-      - "15672:15672"  # Management UI
+      # Windows 常把 15672 划入 Hyper-V 保留段，宿主映射改用 35672（容器内仍是 15672）
+      - "35672:15672"  # Management UI → http://localhost:35672
     environment:
       RABBITMQ_DEFAULT_USER: shumamall
       RABBITMQ_DEFAULT_PASS: shumamall123

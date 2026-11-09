@@ -42,10 +42,11 @@
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
-        <!-- Spring Cloud OpenFeign（调 IAM 拉用户快照；负载均衡由宿主 product 提供） -->
+        <!-- 仅编译 Feign 接口；运行时由 shumamall-product 提供 OpenFeign + LoadBalancer -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-openfeign</artifactId>
+            <scope>provided</scope>
         </dependency>
 
         <!-- MyBatis-Plus 核心包（仅复用 IdWorker 雪花 ID，不引入数据源） -->
@@ -59,6 +60,7 @@
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <scope>provided</scope>
         </dependency>
 
         <!-- 公共模块 -->

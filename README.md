@@ -18,16 +18,15 @@
 | 模块 | 端口 | 职责 |
 |---|---|---|
 | shumamall-gateway | 8080 | 统一网关：路由转发、限流、客户端 IP 透传 |
-| shumamall-iam | 8081 | 认证 + 用户 + RBAC/审计（原 auth / user / permission） |
+| shumamall-iam | 8081 | 管理域：认证 + 用户 + RBAC/审计 + 仪表盘/上传 + 系统字典 |
 | shumamall-product | 8083 | 商品 / 分类 / 品牌 / SKU + 评论区（MongoDB） |
 | shumamall-order | 8084 | 购物车与订单，状态机 |
 | shumamall-payment | 8085 | 支付与退款 |
 | shumamall-search | 8087 | ES 全文检索（IK 中文分词） |
 | shumamall-agent | 8088 | AI 导购：混合检索 + 工具调用 + 流式回复 |
-| shumamall-admin | 8090 | 管理端聚合 + 系统码表（原 dict） |
 | shumamall-video | 8092 | 视频上传、HLS 切片与播放 |
 
-Maven 仍保留 `shumamall-auth`、`shumamall-user`、`shumamall-permission`、`shumamall-dict`、`shumamall-comment` 模块 jar，由对应聚合进程合并启动。
+Maven 仍保留 `shumamall-auth`、`shumamall-user`、`shumamall-permission`、`shumamall-admin`、`shumamall-dict`、`shumamall-comment` 等库模块，由 **shumamall-iam**（及 product 等）合并打进同一可执行 jar。
 
 ## 主要特性
 
@@ -47,7 +46,7 @@ Maven 仍保留 `shumamall-auth`、`shumamall-user`、`shumamall-permission`、`
 ## 项目结构
 
 ```
-shumamall-backend/        Maven 多模块后端（网关 + 9 个可部署进程）
+shumamall-backend/        Maven 多模块后端（网关 + 8 个可部署进程）
 shumamall-frontend/       pc-user 用户端 / pc-admin 管理端
 nacos-config/             Nacos 配置模板与发布脚本
 mysql-init/ mongo-init/   数据库初始化脚本
@@ -90,7 +89,7 @@ docker compose -f docker-compose.app.yml --profile core up -d --build
 # 再加搜索链路（需要基础设施里的 elasticsearch、rabbitmq）
 docker compose -f docker-compose.app.yml --profile core --profile search up -d --build
 
-# 全量 9 个服务
+# 全量 8 个可部署服务
 docker compose -f docker-compose.app.yml --profile all up -d --build
 
 # 改完代码只重建受影响的镜像
@@ -98,7 +97,7 @@ docker compose -f docker-compose.app.yml --profile core build order payment
 docker compose -f docker-compose.app.yml --profile core up -d --no-deps order
 ```
 
-profile 划分：`core`（下单主链路，含商品/评论）、`search`、`agent`、`admin`（管理端/视频/字典）、`all`。
+profile 划分：`core`（网关 + IAM + 商品/订单/支付）、`search`、`agent`、`video`、`all`。
 完整命令与端口对照见 `docker-compose.app.yml` 头部注释。
 
 ### 接口文档
@@ -110,4 +109,4 @@ profile 划分：`core`（下单主链路，含商品/评论）、`search`、`ag
 
 （网关是 WebFlux 应用，不提供 Swagger UI，接口文档按具体服务端口访问。）
 
-各服务的端口与依赖见模块内 `bootstrap.yml`。
+可部署进程的端口与依赖见各模块 `bootstrap.yml`（库模块无独立配置，由 IAM 等聚合进程统一加载）。

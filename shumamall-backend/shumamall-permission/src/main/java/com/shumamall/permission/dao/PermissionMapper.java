@@ -8,6 +8,7 @@ import org.apache.ibatis.annotations.Mapper;
 /**
  * 权限点 Mapper。
  */
+@DS("perm")
 @Mapper
 public interface PermissionMapper extends BaseMapper<PermissionEntity> {
 }

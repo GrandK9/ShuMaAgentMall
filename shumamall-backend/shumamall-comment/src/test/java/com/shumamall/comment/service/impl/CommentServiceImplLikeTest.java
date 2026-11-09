@@ -52,7 +52,7 @@ class CommentServiceImplLikeTest {
     @Mock
     private UserFeignClient userFeignClient;
     @Mock
-    private ProductFeignClient productFeignClient;
+    private ProductCommentCounter productCommentCounter;
 
     private CommentServiceImpl service;
 

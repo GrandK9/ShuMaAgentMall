@@ -26,7 +26,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class AuthServiceImpl implements AuthService {
 
-    private final UserMapper userMapper;
+    private final AuthUserMapper authUserMapper;
     private final JwtUtils jwtUtils;
     private final SignSecretResolver signSecretResolver;
 

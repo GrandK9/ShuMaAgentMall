@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * 用户/地址工具：查询当前用户个人信息与收货地址（调用 shumamall-user 用户端接口）。
+ * 用户/地址工具：查询当前用户个人信息与收货地址（调用 shumamall-iam 用户端接口）。
  * <p>
  * 身份来源为 {@link ToolContext} 中的 userId（编排器注入），Feign 透传 JWT，
  * user 服务的 TokenFilter 从 token 解析 userId，两侧保持一致。

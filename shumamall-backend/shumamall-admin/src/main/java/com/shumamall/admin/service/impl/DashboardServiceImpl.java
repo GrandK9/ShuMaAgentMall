@@ -6,9 +6,9 @@ import com.shumamall.admin.dto.SalesTrendItemVO;
 import com.shumamall.admin.dto.TopProductVO;
 import com.shumamall.admin.feign.OrderFeignClient;
 import com.shumamall.admin.feign.ProductFeignClient;
-import com.shumamall.admin.feign.UserFeignClient;
 import com.shumamall.admin.service.DashboardService;
 import com.shumamall.common.result.R;
+import com.shumamall.user.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -30,7 +30,7 @@ import java.util.function.Supplier;
 @RequiredArgsConstructor
 public class DashboardServiceImpl implements DashboardService {
 
-    private final UserFeignClient userFeignClient;
+    private final UserService userService;
     private final ProductFeignClient productFeignClient;
     private final OrderFeignClient orderFeignClient;
 
@@ -41,10 +41,7 @@ public class DashboardServiceImpl implements DashboardService {
      */
     @Override
     public DashboardVO getDashboard() {
-        Long totalUsers = safeCallLong("shumamall-iam", () -> {
-            R<Long> resp = userFeignClient.countUsers();
-            return resp != null ? resp.getData() : null;
-        });
+        Long totalUsers = safeCallLong("user", () -> userService.countUsers());
         Long totalProducts = safeCallLong("shumamall-product", () -> {
             R<Long> resp = productFeignClient.countProducts();
             return resp != null ? resp.getData() : null;

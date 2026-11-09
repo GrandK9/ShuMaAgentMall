@@ -1,18 +1,16 @@
 package com.shumamall.permission.api;
 
-import com.shumamall.permission.service.PermissionCacheService;
-import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.Set;
 
 /**
- * 权限服务 Feign 接口。
+ * IAM 权限内部 HTTP 路径约定（由 {@link com.shumamall.permission.api.impl.InternalPermissionController} 实现）。
  * <p>
- * 供其他微服务（如 shumamall-auth）调用，用于权限校验和缓存查询。
+ * 本接口不带 {@code @FeignClient}：合并进 IAM 后禁止在同进程注册「调自己」的 Feign。
+ * 其它微服务通过 {@link com.shumamall.common.perm.spi.UserPermissionsLookup} 访问（HTTP 或本地实现）。
  */
-@FeignClient(name = "shumamall-iam", path = "/api/permission/internal")
 public interface PermissionApi {
 
     /**

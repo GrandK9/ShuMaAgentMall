@@ -132,9 +132,8 @@
         </dependency>
 
         <!--
-            springdoc-openapi：本模块只用来编译统一 OpenAPI 配置（common.config.OpenApiConfig）。
-            标 optional 不向下游传递，各 WebMVC 服务自行引入 starter，
-            gateway（WebFlux，与 webmvc-ui 互斥）就不必被迫排除依赖。
+            springdoc：仅编译 {@link com.shumamall.common.config.OpenApiConfig}。
+            optional 不传给网关（WebFlux）；各 WebMVC 服务仍须自行引入 starter 以暴露 Swagger UI。
         -->
         <dependency>
             <groupId>org.springdoc</groupId>

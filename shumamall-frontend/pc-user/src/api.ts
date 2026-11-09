@@ -308,7 +308,7 @@ export function payOrder(orderNo: string, paymentMethod: number, amount: number)
   });
 }
 
-/* ---------------- 用户（user 8082） ---------------- */
+/* ---------------- 用户（IAM 8081） ---------------- */
 
 export function getUserInfo(): Promise<UserInfo> {
   return request<UserInfo>(`${USER_BASE}/info`);
@@ -340,7 +340,7 @@ export function getSeckillResult(requestId: string): Promise<SeckillResult> {
   return request<SeckillResult>(`${SECKILL_BASE}/orders/${encodeURIComponent(requestId)}`);
 }
 
-/* ---------------- 地址（user 8082） ---------------- */
+/* ---------------- 地址（IAM 8081） ---------------- */
 
 export function getAddresses(): Promise<Address[]> {
   return request<Address[]>(ADDRESS_BASE);

@@ -3,8 +3,11 @@ package com.shumamall.search.index;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.ElasticsearchException;
 import co.elastic.clients.elasticsearch._types.Time;
+import co.elastic.clients.elasticsearch._types.mapping.DenseVectorIndexOptionsType;
+import co.elastic.clients.elasticsearch._types.mapping.DenseVectorSimilarity;
 import co.elastic.clients.elasticsearch._types.mapping.Property;
 import co.elastic.clients.elasticsearch._types.mapping.TextProperty;
+import com.shumamall.common.search.ProductSearchIndexNames;
 import co.elastic.clients.elasticsearch.indices.CreateIndexRequest;
 import co.elastic.clients.elasticsearch.indices.DeleteIndexRequest;
 import co.elastic.clients.elasticsearch.indices.ExistsRequest;
@@ -31,7 +34,10 @@ import java.util.Set;
 public class ProductIndexService {
 
     /** 对外别名。查询、增量都使用这个名字。 */
-    public static final String PRODUCT_INDEX = "shumamall_product_search";
+    public static final String PRODUCT_INDEX = ProductSearchIndexNames.PRODUCT_INDEX;
+
+    /** 语义向量维度（与 {@link com.shumamall.embedding.ProductEmbeddingService} 配置一致） */
+    public static final int EMBEDDING_DIMS = 1024;
 
     /** 写入分析器：html_strip + ik_max_word（与 agent 侧命名一致） */
     public static final String TEXT_ANALYZER = "shumamall_text";
@@ -257,7 +263,15 @@ public class ProductIndexService {
                         .properties("isHot", Property.of(p -> p.boolean_(b2 -> b2)))
                         .properties("mainImage", Property.of(p -> p.keyword(k -> k)))
                         .properties("createdAt", Property.of(p -> p.date(d -> d
-                                .format("strict_date_optional_time||epoch_millis"))))));
+                                .format("strict_date_optional_time||epoch_millis"))))
+                        .properties("embedding", Property.of(p -> p.denseVector(d -> d
+                                .dims(EMBEDDING_DIMS)
+                                .index(true)
+                                .similarity(DenseVectorSimilarity.Cosine)
+                                .indexOptions(o -> o
+                                        .type(DenseVectorIndexOptionsType.Hnsw)
+                                        .m(16)
+                                        .efConstruction(100)))))));
     }
 
     /** 文本字段：写入细切，查询粗切。 */

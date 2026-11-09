@@ -2,21 +2,14 @@ package com.shumamall.agent.controller;
 
 import com.shumamall.agent.search.document.ProductDoc;
 import com.shumamall.agent.search.dto.HybridSearchRequest;
-import com.shumamall.agent.search.embedding.ProductEmbeddingService;
 import com.shumamall.agent.search.service.ProductHybridSearchService;
-import com.shumamall.agent.search.service.ProductIndexService;
-import com.shumamall.agent.search.service.ProductIndexWriter;
-import com.shumamall.common.exception.BusinessException;
+import com.shumamall.embedding.ProductEmbeddingService;
 import com.shumamall.common.result.R;
-import com.shumamall.common.result.ResultCode;
-import org.redisson.api.RLock;
-import org.redisson.api.RedissonClient;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import lombok.extern.slf4j.Slf4j;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -26,87 +19,18 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 商品检索索引运维接口。
- * <p>
- * 供初始化与验证使用：
- * <ul>
- *   <li>{@code POST /rebuild}：创建（或重建）索引并全量灌库，打通"灌库 → 检索"链路</li>
- *   <li>{@code GET /search}：跳过 LLM，直接执行 Hybrid Search，便于单独验证检索效果</li>
- * </ul>
- * 路径位于 {@code /api/v1/agent/*} 下，同样受 TokenFilter 保护。
+ * Hybrid 检索验证接口（索引灌库由 search 服务负责）。
  */
-@Tag(name = "智能体-检索索引运维", description = "商品检索索引的创建灌库与 Hybrid Search 验证接口")
-@Slf4j
+@Tag(name = "智能体-检索验证", description = "对合并商品索引执行 Hybrid Search（BM25 + KNN + RRF）")
 @RestController
 @RequestMapping("/api/v1/agent/search-index")
+@RequiredArgsConstructor
 public class SearchIndexController {
 
-    /** 全量重建互斥键。不设租期，由 Redisson 看门狗在任务存活期间续期。 */
-    private static final String REBUILD_LOCK = "agent:index:rebuild";
-
-    private final ProductIndexService indexService;
-    private final ProductIndexWriter indexWriter;
     private final ProductHybridSearchService hybridSearchService;
     private final ProductEmbeddingService embeddingService;
-    private final RedissonClient redissonClient;
 
-    public SearchIndexController(ProductIndexService indexService,
-                                 ProductIndexWriter indexWriter,
-                                 ProductHybridSearchService hybridSearchService,
-                                 ProductEmbeddingService embeddingService,
-                                 RedissonClient redissonClient) {
-        this.indexService = indexService;
-        this.indexWriter = indexWriter;
-        this.hybridSearchService = hybridSearchService;
-        this.embeddingService = embeddingService;
-        this.redissonClient = redissonClient;
-    }
-
-    /**
-     * 创建索引并全量灌库。
-     *
-     * @param recreate 是否先删除已有索引再重建（mapping / 分词器变更时必须传 true）
-     */
-    @Operation(summary = "创建索引并全量灌库")
-    @PostMapping("/rebuild")
-    public R<Map<String, Object>> rebuild(
-            @Parameter(description = "是否先删除已有索引再重建，mapping/分词器变更时必须传 true")
-            @RequestParam(value = "recreate", defaultValue = "false") boolean recreate) {
-        RLock lock = redissonClient.getLock(REBUILD_LOCK);
-        if (!acquire(lock)) {
-            throw new BusinessException(ResultCode.CONFLICT, "索引正在重建");
-        }
-        try {
-            int written = indexWriter.rebuildIndex();
-            Map<String, Object> result = new LinkedHashMap<>();
-            result.put("alias", ProductIndexService.PRODUCT_INDEX);
-            result.put("indices", indexService.aliasTargets());
-            result.put("documentCount", written);
-            result.put("recreateIgnored", recreate);
-            log.info("索引重建完成: indices={}, written={}", result.get("indices"), written);
-            return R.ok(result);
-        } finally {
-            release(lock);
-        }
-    }
-
-    /**
-     * 立即尝试加锁。看门狗在持锁线程还活着时续期，进程退出后锁自动释放。
-     */
-    private boolean acquire(RLock lock) {
-        return lock.tryLock();
-    }
-
-    private void release(RLock lock) {
-        if (lock.isHeldByCurrentThread()) {
-            lock.unlock();
-        }
-    }
-
-    /**
-     * 直接执行 Hybrid Search（BM25 + KNN + RRF），返回命中的商品。
-     */
-    @Operation(summary = "直接执行 Hybrid Search（BM25 + KNN + RRF），返回命中的商品")
+    @Operation(summary = "直接执行 Hybrid Search（BM25 + KNN + RRF）")
     @GetMapping("/search")
     public R<List<Map<String, Object>>> search(
             @Parameter(description = "搜索关键词") @RequestParam("keyword") String keyword,
@@ -123,18 +47,20 @@ public class SearchIndexController {
                 .build();
 
         List<Map<String, Object>> items = hybridSearchService.search(request).stream()
-                .<Map<String, Object>>map(doc -> {
-                    Map<String, Object> item = new LinkedHashMap<>();
-                    item.put("id", doc.getId());
-                    item.put("name", doc.getName());
-                    item.put("subtitle", doc.getSubtitle());
-                    item.put("brand", doc.getBrand());
-                    item.put("category", doc.getCategory());
-                    item.put("price", doc.getPrice());
-                    item.put("salesVolume", doc.getSalesVolume());
-                    return item;
-                })
+                .map(this::toItem)
                 .toList();
         return R.ok(items);
+    }
+
+    private Map<String, Object> toItem(ProductDoc doc) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id", doc.getId());
+        item.put("name", doc.getName());
+        item.put("subtitle", doc.getSubtitle());
+        item.put("brand", doc.getBrand());
+        item.put("category", doc.getCategory());
+        item.put("price", doc.getPrice());
+        item.put("salesVolume", doc.getSalesVolume());
+        return item;
     }
 }

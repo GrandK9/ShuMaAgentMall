@@ -3,16 +3,6 @@ spring:
   autoconfigure:
     exclude:
       - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
-  rabbitmq:
-    host: localhost
-    port: 5672
-    username: shumamall
-    password: shumamall123
-    listener:
-      simple:
-        # 手动 ack：处理成功才确认；失败时不确认，由监听器显式 basicNack 转入死信队列
-        acknowledge-mode: manual
-        prefetch: 10
   data:
     redis:
       host: localhost
@@ -85,14 +75,6 @@ shumamall:
         # RRF 融合排序参数（BM25 与 KNN 结果各按排名倒序融合，rank-constant 越大越平滑）
         rank-constant: 60
         window-size: 50
-      # 商品变更事件交换机（product 发布，search/agent 各自绑定独立队列消费）
-      sync-exchange: shumamall.product.sync.exchange
-      # 增量同步队列（绑定到上述交换机；与 search 服务队列隔离，避免竞争消费漏消息）
-      sync-queue: agent.search.sync.queue
-      # 死信交换机（与 search 共用同一条 DLX，但死信队列各自独立）
-      dlx: shumamall.product.sync.dlx
-      # 死信队列（失败消息在此堆积，等待人工排查/重放）
-      dlq: agent.search.sync.queue.dlq
 
 logging:
   level:

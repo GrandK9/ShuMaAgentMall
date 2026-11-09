@@ -9,7 +9,7 @@ import org.springframework.context.annotation.Configuration;
 /**
  * MinIO 对象存储配置。
  * <p>
- * 从 Nacos 配置中心（shumamall-admin.yaml）读取连接参数，创建 MinioClient Bean。
+ * 从 Spring 配置（IAM bootstrap / 环境变量）读取 MinIO 连接参数，创建 MinioClient Bean。
  *
  * @author ShuMaMall Team
  */

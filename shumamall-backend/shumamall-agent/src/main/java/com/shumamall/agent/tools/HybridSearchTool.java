@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shumamall.agent.dto.ProductItemDTO;
 import com.shumamall.agent.search.document.ProductDoc;
 import com.shumamall.agent.search.dto.HybridSearchRequest;
-import com.shumamall.agent.search.embedding.ProductEmbeddingService;
+import com.shumamall.embedding.ProductEmbeddingService;
 import com.shumamall.agent.search.service.ProductHybridSearchService;
 import com.shumamall.agent.search.service.SearchFallbackService;
 import lombok.extern.slf4j.Slf4j;
@@ -90,8 +90,9 @@ public class HybridSearchTool extends BaseTool {
         brief.setSubtitle(doc.getSubtitle());
         brief.setBrand(doc.getBrand());
         brief.setCategory(doc.getCategory());
-        brief.setPrice(doc.getPrice());
-        brief.setStock(doc.getStock());
+        if (doc.getPrice() != null) {
+            brief.setPrice(java.math.BigDecimal.valueOf(doc.getPrice()));
+        }
         brief.setSalesVolume(doc.getSalesVolume());
         return brief;
     }

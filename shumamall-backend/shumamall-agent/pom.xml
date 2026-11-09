@@ -58,22 +58,22 @@
             <artifactId>redisson</artifactId>
         </dependency>
 
-        <!-- RabbitMQ（消费商品变更事件，增量同步向量索引） -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-amqp</artifactId>
-        </dependency>
-
         <!-- Elasticsearch 8.x（Hybrid Search：BM25 关键词 + KNN 向量检索，RRF 融合） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-elasticsearch</artifactId>
         </dependency>
 
-        <!-- Spring AI：OpenAI 兼容适配（对接 DeepSeek） -->
+        <!-- Spring AI starter：Chat 等自动配置（DeepSeek） -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-openai</artifactId>
+        </dependency>
+
+        <!-- Hybrid 检索 query 向量化 -->
+        <dependency>
+            <groupId>com.shumamall</groupId>
+            <artifactId>shumamall-embedding</artifactId>
         </dependency>
 
         <!-- Swagger / OpenAPI 文档（springdoc，版本由父 pom 统一管理） -->

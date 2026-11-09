@@ -102,13 +102,13 @@ export function login(username: string, password: string): Promise<LoginResp> {
   });
 }
 
-/* ---------------- 仪表盘（admin 8090） ---------------- */
+/* ---------------- 仪表盘（IAM 8081） ---------------- */
 
 export function getDashboard(): Promise<Dashboard> {
   return request<Dashboard>(DASHBOARD_BASE);
 }
 
-/* ---------------- 文件上传（admin 8090 · MinIO） ---------------- */
+/* ---------------- 文件上传（IAM 8081 · MinIO） ---------------- */
 
 /** 上传商品主图，返回可写入 mainImage 的稳定 URL */
 export async function uploadProductImage(file: File): Promise<UploadResult> {
@@ -266,7 +266,7 @@ export function refundPayment(id: number): Promise<void> {
   return request<void>(`${PAYMENT_BASE}/${id}/refund`, { method: 'POST' });
 }
 
-/* ---------------- 角色（permission 8086） ---------------- */
+/* ---------------- 角色（IAM 8081） ---------------- */
 
 export function getRolePage(query: { page?: number; size?: number } = {}): Promise<PageResult<Role>> {
   const params = new URLSearchParams();
@@ -301,7 +301,7 @@ export function getRolePermissions(roleId: number): Promise<number[]> {
   return request<number[]>(`${ROLE_BASE}/${roleId}/permissions`);
 }
 
-/* ---------------- 权限点（permission 8086） ---------------- */
+/* ---------------- 权限点（IAM 8081） ---------------- */
 
 export function getPermissionList(): Promise<Permission[]> {
   return request<Permission[]>(PERMISSION_BASE);
@@ -327,7 +327,7 @@ export function deletePermission(id: number): Promise<void> {
   return request<void>(`${PERMISSION_BASE}/${id}`, { method: 'DELETE' });
 }
 
-/* ---------------- 菜单（permission 8086） ---------------- */
+/* ---------------- 菜单（IAM 8081） ---------------- */
 
 export function getMenuTree(): Promise<MenuItem[]> {
   return request<MenuItem[]>(MENU_BASE);
@@ -342,7 +342,7 @@ export function getMyPermissions(): Promise<string[]> {
   return request<string[]>(MY_PERMISSION_BASE);
 }
 
-/* ---------------- 审计日志（permission 8086） ---------------- */
+/* ---------------- 审计日志（IAM 8081） ---------------- */
 
 /**
  * 审计日志组合查询（需 audit:view 权限）。
@@ -366,7 +366,7 @@ export function queryAuditLogs(query: {
   return request<PageResult<AuditLog>>(`${AUDIT_BASE}/logs?${params.toString()}`);
 }
 
-/* ---------------- 码表（admin 8090 + dict） ---------------- */
+/* ---------------- 码表（IAM 8081） ---------------- */
 
 export function getDictTypes(): Promise<DictItem[]> {
   return request<DictItem[]>(`${DICT_BASE}/types`);

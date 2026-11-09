@@ -3,7 +3,7 @@
 # =============================================================================
 # ShuMaMall 后端通用镜像构建文件（多阶段构建）
 #
-# 一个 Dockerfile 构建全部 9 个可部署进程，用 --build-arg MODULE 指定要打哪个模块：
+# 一个 Dockerfile 构建全部 8 个可部署进程，用 --build-arg MODULE 指定要打哪个模块：
 #   docker build -t shumamall/product:1.0.0 --build-arg MODULE=shumamall-product --build-arg PORT=8083 -f Dockerfile .
 #
 # 「按需构建、按需启动子集」的编排与命令见仓库根目录的 docker-compose.app.yml。
@@ -29,7 +29,7 @@ WORKDIR /build
 # 一步 COPY 让缓存失效范围最小：改代码只影响这一层往后的步骤。
 COPY . .
 
-# -pl 指定目标模块，-am 连带构建它依赖的 shumamall-common；
+# -pl 指定目标模块，-am 连带构建其依赖（如 shumamall-common、shumamall-embedding）；
 # m2 本地仓库用 BuildKit cache mount 持久化，重复构建不再重新下载依赖。
 # settings.xml 必须写在 cache mount 目录内：mount 会盖掉镜像里同路径的已有文件，
 # 写在外面等于没写。写在挂载点内则随缓存一起留存，后续构建直接命中。

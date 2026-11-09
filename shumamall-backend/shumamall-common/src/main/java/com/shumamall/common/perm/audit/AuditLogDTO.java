@@ -8,7 +8,7 @@ import java.io.Serializable;
  * 管理端操作审计记录（跨服务传输对象）。
  * <p>
  * 由 {@link AuditLogReporter} 从**业务服务**（product / order / payment / video 等）
- * 上报到 shumamall-permission 服务，由其落库到 MongoDB（集合 {@code audit_log}）。
+ * 上报到 shumamall-iam，由其落库到 MongoDB（集合 {@code audit_log}）。
  * 与 {@code product_comment} 等文档模型不同，审计日志是「业务服务的写入方」与
  * 「存储方」分离的，因此这里需要一个独立的传输对象。
  * <p>

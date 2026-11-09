@@ -13,7 +13,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -70,7 +69,7 @@ class ProductHybridSearchServiceTest {
 
         // BM25：multi_match 覆盖检索字段，名称加权最高
         assertThat(bm25.query().multiMatch().fields()).containsExactlyInAnyOrder(
-                "name^3", "subtitle^2", "brand", "category", "description");
+                "name^3", "name.ngram^0.5", "subtitle^2", "brandName", "categoryName", "description");
         assertThat(bm25.query().multiMatch().query()).isEqualTo("拍照手机");
 
         // 单路候选窗口 = windowSize（融合前每路取前 50 条）
@@ -152,7 +151,7 @@ class ProductHybridSearchServiceTest {
         ProductDoc doc = new ProductDoc();
         doc.setId(1L);
         doc.setName("小米14");
-        doc.setPrice(new BigDecimal("3999"));
+        doc.setPrice(3999.0);
 
         SearchResponse<ProductDoc> resp = mock(SearchResponse.class);
         HitsMetadata<ProductDoc> hits = mock(HitsMetadata.class);
